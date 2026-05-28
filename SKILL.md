@@ -1,37 +1,76 @@
 ---
 name: qut-student-toolkit
 category: productivity
-description: Set of tools to bypass admin blocks and automate QUT student systems (Canvas + Outlook).
+description: Prepare and maintain the scrubbed public toolkit for QUT students to automate Canvas and Outlook.
 ---
 
-# QUT Student Toolkit
+# QUT Student Toolkit Lifecycle
 
-This toolkit contains automated workflows to help QUT students access their data programmatically without needing administrator-level API tokens.
+This skill governs the maintenance and deployment of the `qut-student-toolkit` repository.
 
-## Included Tools
+## Safety & Scrubbing Protocol (MANDATORY)
 
-### 1. Outlook Access (`qut_outlook.py`)
-Uses the "Office Native App" client ID to bypass Graph API blocks.
-- One-time device code auth.
-- Fetch inbox headers and search messages via Graph API.
-- Persistent token caching (re-auth once a week).
+Before any code is moved to the public folder or pushed to GitHub:
 
-### 2. Canvas Downloader (`canvas.py`)
-Uses session cookies from your browser to pull course content.
-- List active courses and file structures.
-- Bulk download all course files, modules, and pages.
-- Converts Canvas pages into Markdown for local search/Obsidian.
+1. **Email Removal:** Replace all instances of `your.email@connect.qut.edu.au`
+   and `your.personal@email.com` with `your.email@connect.qut.edu.au`.
+2. **Student ID Removal:** Replace `[STUDENT_ID]` with `[STUDENT_ID]` or remove entirely.
+3. **Path Removal:** Replace hardcoded paths like `C:\Users\arwin\` with generic
+   `%USERPROFILE%` or relative paths.
+4. **Token Block:** NEVER copy `.canvas_cookies.json`, `.qut_outlook_cache.json`,
+   or `.qut_device_code.txt` into the public folder.
+5. **Playwright Profile Block:** NEVER copy `.playwright_canvas_profile/` — it
+   contains your browser session data.
+6. **Git Verification:** Ensure `git config user.email` is set to the no-reply
+   address (`arwinkt@users.noreply.github.com`) before committing.
 
-## Setup Instructions
+## Credential Audit Command
 
-### Pre-requisites
-- Python 3.8+
-- `pip install msal requests canvasapi pdfplumber python-docx python-pptx openpyxl Pillow`
+Run before every push:
 
-### Running the Tools
-1. **Outlook:** `python qut_outlook.py auth` to link your student account.
-2. **Canvas:** `python canvas.py auth` to verify your session cookies.
-3. **Pull All Content:** `python canvas.py pull-all`
+```bash
+cd /c/Users/arwin/Desktop/qut-student-toolkit
+grep -rn "student\|[STUDENT_ID]\|your.personal" . \
+  --exclude-dir=.git --include="*.py" --include="*.md" --include="*.txt"
+# Should return zero results
+```
 
-## Safety Disclaimer
-These tools are for personal academic use. They do not store passwords. They use official Microsoft and Canvas endpoints via your own active sessions. Never share your `.qut_outlook_cache.json` or `.canvas_cookies.json` files as they contain your active session tokens.
+## Deployment Workflow
+
+### 1. Sync Master Scripts
+
+When a master script changes (`second_brain/scripts/`), sync to toolkit:
+
+```python
+# Read master, scrub, write to toolkit
+# Key replacements:
+# your.email@connect.qut.edu.au → your.email@connect.qut.edu.au
+# your.personal@email.com → your.email@connect.qut.edu.au
+# [STUDENT_ID] → [STUDENT_ID]
+# C:\\Users\\arwin\\ → %USERPROFILE%\\
+```
+
+### 2. Push to GitHub
+
+```bash
+cd /c/Users/arwin/Desktop/qut-student-toolkit
+git config user.email "arwinkt@users.noreply.github.com"
+git add .
+git commit -m "Update message"
+git push origin master
+```
+
+## Relevant Paths
+
+- **Public Folder:** `C:\Users\arwin\Desktop\qut-student-toolkit\`
+- **GitHub Repo:** `https://github.com/arwinkt/qut-student-toolkit`
+- **Master Scripts:** `C:\Users\arwin\second_brain\scripts\`
+
+## What NOT to Include
+
+- `.canvas_cookies.json` — active Canvas session
+- `.qut_outlook_cache.json` — MSAL token cache
+- `.qut_device_code.txt` — device code state
+- `.playwright_canvas_profile/` — browser profile (massive, personal)
+- `scan_school.py` — tightly coupled to personal vault structure
+- `compile.py`, `flush.py`, `inject_context.py` — personal vault management tools
