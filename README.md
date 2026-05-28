@@ -14,7 +14,8 @@ Built by a QUT student, for QUT students.
 | `scripts/canvas_auth.py` | One-time Canvas login via Playwright (saves cookies) |
 | `scripts/canvas.py` | Canvas CLI — list courses, download files, pull pages as markdown |
 | `scripts/qut_outlook.py` | QUT Outlook via EWS + device code OAuth — inbox, sent, search, send |
-| `scripts/scan_school_README.md` | How to use `scan_school.py` to convert files to vault notes |
+| `scripts/scan_school.py` | Convert ALL downloaded files to searchable markdown notes (PDF, PPTX, DOCX, XLSX, images via Claude Vision, draw.io diagrams) |
+| `scripts/scan_school_README.md` | Quick reference for scan_school.py |
 
 ---
 
@@ -64,7 +65,79 @@ python scripts/canvas.py pages <COURSE_ID>    # List Canvas pages
 
 Session stays valid for ~7 days. Re-run `canvas_auth.py` when it expires.
 
-### 3. Outlook setup (one-time, ~1 minute)
+### 4. Convert all downloaded files to notes (the full pipeline)
+
+This is the part that makes everything LLM-usable. After pulling from Canvas:
+
+```bash
+# Basic usage — scan everything
+python scripts/scan_school.py
+
+# One subject only (faster)
+python scripts/scan_school.py --subject "Database Management"
+
+# Skip image analysis (no API calls, much faster)
+python scripts/scan_school.py --no-vision
+```
+
+**What it does:** Recursively scans your `~/Desktop/school/` folder and converts
+every supported file into a clean markdown note, saved to your vault's `education/` folder.
+
+**Supported formats:**
+
+| Type | Extensions |
+|---|---|
+| Documents | `.pdf` `.docx` `.doc` `.txt` `.md` |
+| Slides | `.pptx` `.pptm` `.ppsx` `.ppt` |
+| Spreadsheets | `.xlsx` `.xls` `.csv` |
+| Images | `.png` `.jpg` `.jpeg` `.gif` `.webp` `.bmp` |
+| Diagrams | `.drawio` |
+| Code / Data | `.py` `.js` `.html` `.json` `.xml` `.yaml` `.csv` |
+
+For images, it uses Claude Vision (requires `ANTHROPIC_API_KEY`) to describe
+what's in the image — text, diagrams, charts, tables. Skip with `--no-vision`
+if you don't have an API key or want a faster run.
+
+**Configure paths** via environment variables (or edit the top of the script):
+
+```bash
+# Windows
+set SCHOOL_DIR=C:\path\to\your\school\folder
+set VAULT_DIR=C:\path\to\your\obsidian\vault
+python scripts/scan_school.py
+
+# macOS / Linux
+SCHOOL_DIR=~/Downloads/school VAULT_DIR=~/vault python scripts/scan_school.py
+```
+
+Defaults: `SCHOOL_DIR` = `~/Desktop/school` (where `canvas.py pull-all` saves to),
+`VAULT_DIR` = the parent directory of the `scripts/` folder (assumes you cloned this
+repo inside your vault).
+
+**After running:** Your notes are in `<vault>/education/`. If you use an AI assistant
+with file access to your vault, say "load my [subject] context" and it can read
+everything — PDFs, slides, spreadsheets, diagrams, all converted to plain text.
+
+### Full end-to-end workflow
+
+```bash
+# 1. Auth Canvas (first time only)
+python scripts/canvas_auth.py
+
+# 2. Pull all course files
+python scripts/canvas.py pull-all
+
+# 3. Convert everything to searchable notes
+python scripts/scan_school.py
+
+# 4. (Optional) Sync email
+python scripts/qut_outlook.py inbox 20
+```
+
+After step 3, every PDF, PPTX, DOCX, spreadsheet, diagram, and image from your
+Canvas courses is a readable markdown file your AI assistant can search and use.
+
+
 
 Edit `scripts/qut_outlook.py` and set your student email:
 
