@@ -22,7 +22,7 @@ Before any code is moved to the public folder or pushed to GitHub:
 5. **Playwright Profile Block:** NEVER copy `.playwright_canvas_profile/` — it
    contains your browser session data.
 6. **Git Verification:** Ensure `git config user.email` is set to the no-reply
-   address (`arwinkt@users.noreply.github.com`) before committing.
+   address (`yourgithubusername@users.noreply.github.com`) before committing.
 
 ## Credential Audit Command
 
@@ -54,7 +54,7 @@ When a master script changes (`second_brain/scripts/`), sync to toolkit:
 
 ```bash
 cd /c/Users/arwin/Desktop/qut-student-toolkit
-git config user.email "arwinkt@users.noreply.github.com"
+git config user.email "yourgithubusername@users.noreply.github.com"
 git add .
 git commit -m "Update message"
 git push origin master
