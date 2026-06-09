@@ -30,7 +30,7 @@ Run before every push:
 
 ```bash
 cd /c/Users/arwin/Desktop/qut-student-toolkit
-grep -rn "student\|[STUDENT_ID]\|your.personal" . \
+grep -rn "[STUDENT_ID]\|your.personal\|your.email" . \
   --exclude-dir=.git --include="*.py" --include="*.md" --include="*.txt"
 # Should return zero results
 ```
