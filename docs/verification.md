@@ -105,4 +105,6 @@ Publication covers toolkit code, documentation and synthetic tests only.
 - Do not run concurrent sync writers against one output folder.
 - Content-hashed originals, working copies, conflicts and optional notes mirrors
   consume extra disk space. Interrupted QA files were preserved, not deleted.
-- macOS/Linux execution and the GitHub CI matrix have not been verified here.
+- macOS execution has not been verified. Windows and Ubuntu, each with Python
+  3.11 and 3.12, passed the exact reviewed-head GitHub Actions matrix before
+  [PR #1](https://github.com/arwinkt/qut-student-toolkit/pull/1) was merged.
