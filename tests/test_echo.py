@@ -32,6 +32,29 @@ class EchoTests(unittest.TestCase):
         self.assertEqual(rows[0]['title'],'Lecture')
         self.assertEqual(rows[0]['lesson_id'],'synthetic-lesson')
 
+    def test_delayed_library_readiness_and_timeout(self):
+        from qut_toolkit.echo import wait_for_caption_readiness
+        class Page:
+            calls=0
+            def wait_for_timeout(self, ms):
+                self.calls+=1
+                self.asserted_ms=ms
+        page=Page()
+        self.assertTrue(wait_for_caption_readiness(page,lambda: page.calls>=3,4))
+        self.assertEqual(page.calls,3)
+        self.assertEqual(page.asserted_ms,500)
+        page=Page()
+        self.assertFalse(wait_for_caption_readiness(page,lambda: False,2))
+        self.assertEqual(page.calls,4)
+
+    def test_library_slide_deck_is_not_a_caption_recording(self):
+        from qut_toolkit.echo import syllabus_recordings
+        payload={'status':'ok','data':[{'lesson':{'lesson':{'id':'synthetic-lesson'},'medias':[
+            {'id':'video','mediaType':'Video','isAvailable':True},
+            {'id':'audio','mediaType':'Audio','isAvailable':True},
+            {'id':'slides','mediaType':'Presentation','isAvailable':True}]}}]}
+        self.assertEqual([x['provider_id'] for x in syllabus_recordings(payload)],['video','audio'])
+
     def test_canvas_url(self):
         self.assertTrue(safe_canvas_url('https://canvas.qut.edu.au/courses/1/pages/a'))
         for url in ['https://evil.invalid/courses/1','http://canvas.qut.edu.au/courses/1','https://canvas.qut.edu.au.evil.invalid/courses/1']:

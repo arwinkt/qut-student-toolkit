@@ -40,7 +40,9 @@ def validate_download(data, expected_type=None, headers=None):
     content_type=str((headers or {}).get('content-type','')).lower()
     looks_html='text/html' in content_type or sample.startswith(('<!doctype html','<html'))
     if looks_html:
-        auth=re.search(r'type\s*=\s*[\"\']?password|login\.microsoftonline\.com|<title>\s*(?:sign[ -]?in|log[ -]?in)|id\s*=\s*[\"\']login_form',sample)
+        # A password field alone is not a login page: teaching HTML can contain
+        # password generators, form exercises or Wi-Fi configuration tools.
+        auth=re.search(r'login\.microsoftonline\.com|<title>\s*(?:sign[ -]?in|log[ -]?in)|id\s*=\s*[\"\']login_form',sample)
         if auth:
             raise CanvasError('auth','Received a sign-in page instead of a course resource')
         if expected_type and str(expected_type).split(';')[0].lower() not in ('text/html','application/xhtml+xml'):

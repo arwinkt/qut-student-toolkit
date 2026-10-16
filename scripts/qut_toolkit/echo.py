@@ -81,12 +81,26 @@ def syllabus_recordings(payload):
         if not isinstance(lesson_id,str) or not re.fullmatch(r'[a-zA-Z0-9_-]+',lesson_id):
             continue
         for media in group.get('medias') or []:
+            # A library lesson can include a slide deck alongside its recording.
+            # Presentations do not have spoken-caption tracks and must not count
+            # as missing lecture transcripts.
+            if str(media.get('mediaType','')).lower()=='presentation':
+                continue
             if media.get('isAvailable') is not True or media.get('isHiddenDueToCaptions') or media.get('isFailed') or media.get('isProcessing'):
                 continue
             rows.append({'lesson_id':lesson_id,'provider_id':media.get('id'),
                          'title':media.get('title') or lesson.get('displayName') or lesson.get('name') or 'Lecture',
                          'recorded_at':group.get('startTimeUTC')})
     return rows
+
+
+def wait_for_caption_readiness(page, ready, extra_seconds=45):
+    """Allow delayed LTI login/library requests to finish before enumerating lessons."""
+    for _ in range(max(0, int(extra_seconds * 2))):
+        if ready():
+            return True
+        page.wait_for_timeout(500)
+    return bool(ready())
 
 
 def capture_page(session, source_url, output, title=None, unit=None, wait_seconds=18, lesson_limit=None):
@@ -103,12 +117,14 @@ def capture_page(session, source_url, output, title=None, unit=None, wait_second
     tracks={}
     failures=[]
     syllabus=[]
+    syllabus_seen=[]
 
     def response(r):
         parsed=urlsplit(r.url)
         if parsed.scheme=='https' and parsed.hostname in ECHO_HOSTS and re.fullmatch(r'/section/[^/]+/syllabus',parsed.path) and r.ok:
             try:
                 syllabus.extend(syllabus_recordings(r.json()))
+                syllabus_seen.append(True)
             except Exception:
                 failures.append('invalid_or_unsupported_syllabus')
         if is_transcript_response(r.url):
@@ -149,6 +165,7 @@ def capture_page(session, source_url, output, title=None, unit=None, wait_second
             actual_title=title or page.title()
         # Echo loads transcript JSON automatically; wait for all embedded players, not just first cue.
         page.wait_for_timeout(max(1,min(float(wait_seconds),60))*1000)
+        wait_for_caption_readiness(page, lambda: bool(syllabus_seen or payloads or tracks))
         selected_lessons=list(dict.fromkeys(x['lesson_id'] for x in syllabus))
         bounded=lesson_limit is not None and len(selected_lessons)>lesson_limit
         if lesson_limit is not None:
@@ -162,6 +179,8 @@ def capture_page(session, source_url, output, title=None, unit=None, wait_second
             try:
                 frame.goto(f'https://{host}/lesson/{lesson_id}/classroom',wait_until='domcontentloaded',timeout=45000)
                 page.wait_for_timeout(max(1,min(float(wait_seconds),60))*1000)
+                expected={str(x['provider_id']) for x in syllabus if x['lesson_id']==lesson_id}
+                wait_for_caption_readiness(page, lambda: expected.issubset(payloads), 30)
             except Exception:
                 failures.append('lesson_navigation_failed')
         selected_media=[x for x in syllabus if x['lesson_id'] in selected_lessons]

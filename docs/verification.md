@@ -2,11 +2,11 @@
 
 ## Offline checks
 
-Executed on native Windows with Python 3.11:
+Executed on native Windows with Python 3.11 and 3.12:
 
 ```text
 python -B -m unittest discover -s tests -q
-Ran 81 tests
+Ran 84 tests
 OK (skipped=1)
 ```
 
@@ -18,7 +18,7 @@ scanner traversal and extraction failures, and independent-review regressions.
 
 Also executed: compileall, CLI help smoke checks, non-secret setup/sync/report
 fixtures, and `git diff --check`. A Windows/Linux Python 3.11/3.12 CI workflow is
-included but has **not** been run on GitHub; nothing was pushed.
+included. GitHub CI status must be checked on the exact published commit before merging.
 
 ## Real authenticated acceptance (private evidence outside Git)
 
@@ -51,6 +51,23 @@ These are real checks, not synthetic provider responses. They do **not** establi
 that a complete semester archive exists, that inaccessible captions can be fetched,
 or that Panopto/Kaltura/other platforms are supported.
 
+## Fresh setup and bulk-use follow-up
+
+- An independent fresh-folder check exported the committed tree and created clean
+  Python 3.11/3.12 environments. The then-current 81-test suite, documented setup,
+  CLI help checks and dependency-free synthetic scanner passed on both versions.
+- Subsequent live bulk use exposed delayed LTI/library readiness, legitimate
+  teaching HTML containing password inputs, and slide decks being counted as
+  caption-bearing media. Added bounded readiness waits, precise login markers and
+  exclusion of explicit Presentation media, with three regression tests.
+- The updated 84-test suite passes on both Python versions (one permission skip).
+- A four-course private bulk run exported 50 unique existing-caption transcripts;
+  53,393 normalized cues were checked against their saved source text/timings and
+  metadata hashes. No lecture text or private evidence is included here.
+- Module-only discovery limitations remain explicit even when every discovered
+  recording exports successfully. This is not proof that hidden or unlinked
+  resources do not exist.
+
 ## Independent review disposition
 
 A read-only reviewer identified root-link escapes, module-only recording discovery,
@@ -73,8 +90,8 @@ worker scaffolds were archived outside the repo, not shipped. No real lecture te
 student marks, provider access URLs, credentials or browser traffic are test fixtures.
 
 No paid API or audio transcription was invoked. No teaching material was published.
-No private vault scripts were changed. This is a local branch deliverable pending
-owner approval before any remote push.
+Personal integration scripts and teaching material remain outside this repository.
+Publication covers toolkit code, documentation and synthetic tests only.
 
 ## Known limitations
 

@@ -31,6 +31,15 @@ class ReviewRegressions(unittest.TestCase):
             report=write_transcript_index(d,7,[])
             self.assertFalse(report['complete'])
 
+    def test_html_teaching_tool_with_password_input_is_not_login(self):
+        from qut_toolkit.client import validate_download
+        content=b'<html><title>Wi-Fi configuration generator</title><input type="password"></html>'
+        client=CanvasClient(transport=lambda *a:(content,{'content-type':'text/html'}))
+        self.assertEqual(client.download('https://canvas.qut.edu.au/files/1/download'),content)
+        self.assertEqual(validate_download(content,'text/html'),content)
+        with self.assertRaises(CanvasError):
+            validate_download(content,'application/pdf')
+
     def test_login_html_download_rejected(self):
         c=CanvasClient(transport=lambda *a:(b'<html><title>Sign in</title><form><input type="password"></form></html>',{'Content-Type':'text/html'}))
         with self.assertRaises(CanvasError):c.download('https://cdn.invalid/resource')
