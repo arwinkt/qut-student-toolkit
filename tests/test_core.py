@@ -18,9 +18,11 @@ class CoreTests(unittest.TestCase):
             p = Path(d)/'config.json'
             p.write_text(json.dumps({'root': d+'/config'}))
             with patch.dict(os.environ, {'QUT_STUDY_ROOT': d+'/env'}):
-                self.assertEqual(load_config(p).root, Path(d+'/config'))
-                self.assertEqual(load_config(p, root=d+'/cli').root, Path(d+'/cli'))
-                self.assertEqual(load_config().root, Path(d+'/env'))
+                # Windows runner temp paths can use an 8.3 alias; configuration
+                # deliberately canonicalizes paths, so compare resolved targets.
+                self.assertEqual(load_config(p).root, Path(d+'/config').resolve())
+                self.assertEqual(load_config(p, root=d+'/cli').root, Path(d+'/cli').resolve())
+                self.assertEqual(load_config(Path(d)/'missing.json').root, Path(d+'/env').resolve())
     def test_safe_names_and_ids(self):
         for name in ['../CON', 'NUL', 'a/b:c*?', '..', 'aux.txt']:
             result = safe_component(name)
