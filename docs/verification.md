@@ -6,7 +6,7 @@ Executed on native Windows with Python 3.11 and 3.12:
 
 ```text
 python -B -m unittest discover -s tests -q
-Ran 84 tests
+Ran 85 tests
 OK (skipped=1)
 ```
 
@@ -60,7 +60,10 @@ or that Panopto/Kaltura/other platforms are supported.
   teaching HTML containing password inputs, and slide decks being counted as
   caption-bearing media. Added bounded readiness waits, precise login markers and
   exclusion of explicit Presentation media, with three regression tests.
-- The updated 84-test suite passes on both Python versions (one permission skip).
+- The updated 85-test suite passes on both Python versions (one permission skip).
+- Initial Linux CI caught a non-directory path-parent exception during invalid
+  source validation. Source validation now precedes output validation, with
+  consistent configuration errors and a dedicated POSIX-error regression.
 - A four-course private bulk run exported 50 unique existing-caption transcripts;
   53,393 normalized cues were checked against their saved source text/timings and
   metadata hashes. No lecture text or private evidence is included here.

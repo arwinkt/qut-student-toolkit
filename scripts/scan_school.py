@@ -387,8 +387,14 @@ def _linked(path):
 
 
 def _safe_target(path):
-    if any(_linked(p) for p in (path, *path.parents)):
+    try:
+        linked = any(_linked(p) for p in (path, *path.parents))
+    except NotADirectoryError:
+        raise ValueError(f"Path has a non-directory parent: {path}") from None
+    if linked:
         raise ValueError(f"Refusing linked path: {path}")
+    if any(parent.exists() and not parent.is_dir() for parent in path.parents):
+        raise ValueError(f"Path has a non-directory parent: {path}")
 
 
 def _walk(source, output):
@@ -441,10 +447,11 @@ def scan_and_convert(subject_filter=None, use_vision=False, *, source=None,
     """Scan locally, preserving user edits; return processed/skipped/errors/conflicts."""
     source, output = resolve_paths(source, output, vault)
     _safe_target(source)
-    _safe_target(output)
-    source, output = source.resolve(), output.resolve()
+    source = source.resolve()
     if not source.is_dir():
         raise ValueError(f"Source must be an existing directory: {source}")
+    _safe_target(output)
+    output = output.resolve()
     if output == source:
         raise ValueError("Output must not equal source")
     if output.exists() and not output.is_dir():

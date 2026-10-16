@@ -61,6 +61,14 @@ class ScannerTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             scanner.scan_and_convert(source=file)
 
+    def test_non_directory_parent_is_a_configuration_error(self):
+        with mock.patch.object(scanner, '_linked', side_effect=NotADirectoryError('synthetic POSIX path error')):
+            with self.assertRaisesRegex(ValueError, 'non-directory parent'):
+                scanner._safe_target(self.root / 'file' / 'notes')
+        file=self.put('parent-is-file.txt')
+        with self.assertRaises(ValueError):
+            self.scan(output=file / 'notes')
+
     def test_default_output_does_not_recurse(self):
         self.put("Unit/a.txt")
         self.assertEqual(self.scan()["processed"], 1)
