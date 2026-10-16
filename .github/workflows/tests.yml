@@ -1,0 +1,22 @@
+name: Offline tests
+on:
+  push:
+  pull_request:
+jobs:
+  test:
+    strategy:
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+        python: ['3.11', '3.12']
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python }}
+      - name: Synthetic offline tests (no credentials or paid APIs)
+        run: python -B -m unittest discover -s tests -v
+      - name: Compile scripts and tests
+        run: python -m compileall -q scripts tests
+      - name: Check patch whitespace
+        run: git diff --check
