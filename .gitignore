@@ -1,13 +1,41 @@
-# Session/auth cache files — NEVER commit these
-scripts/.canvas_cookies.json
-scripts/.qut_outlook_cache.json
-scripts/.qut_device_code.txt
-scripts/.chrome_cookies_tmp.db
+# Authentication/session data — NEVER commit
+**/.canvas_cookies.json*
+**/.qut_outlook_cache.json*
+**/.qut_device_code.txt
+**/.chrome_cookies_tmp.db
+**/.comet_session.json
+**/.playwright_canvas_profile/
+**/storage-state.json
+.env
+.env.*
+.qut-toolkit.json
 
-# Playwright browser profile (huge, personal)
-scripts/.playwright_canvas_profile/
+# Personal/generated course output. Keep custom destinations outside this repo.
+school/
+QUT Study*/
+/units/
+/reports/
+/notes/
+/education/
+**/originals/
+**/conflicts/
+**/lecture-*/
+**/transcript.md
+**/captions.vtt
+**/cues.json
+**/metadata.json
+**/recordings.json
+**/manifest.json
+**/.scan_school_manifest.json
+**/latest-sync.md
+**/latest-sync.json
+**/latest-transcripts.json
 
-# Python
+# Local execution plans and interrupted tool staging
+.plan/
+.hermes-tmp.*
+
+# Python/build output
 __pycache__/
 *.pyc
 *.pyo
@@ -20,15 +48,8 @@ build/
 venv/
 env/
 
-# macOS
+# OS/editor
 .DS_Store
-
-# Windows
 Thumbs.db
 desktop.ini
-
-# Downloaded school files (your personal content)
-school/
-
-# VS Code
 .vscode/

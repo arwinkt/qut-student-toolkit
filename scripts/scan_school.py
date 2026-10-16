@@ -1,29 +1,4 @@
-"""
-scan_school.py — School Folder → Obsidian Notes
-================================================
-Scans your school folder (default: ~/Desktop/school) and converts ALL useful
-file types into readable markdown notes in second_brain/education/
-
-SUPPORTED:
-  Documents : .pdf, .docx, .doc, .txt, .md
-  Slides    : .pptx, .pptm, .ppsx, .ppt
-  Spreadsheets: .xlsx, .xls, .csv
-  Images    : .png, .jpg, .jpeg, .gif, .webp, .bmp (described via Claude Vision)
-  Diagrams  : .drawio (XML extracted + summarised)
-  Code/Data : .py, .js, .html, .css, .json, .xml, .yaml, .yml
-
-INSTALL DEPENDENCIES (run once):
-    pip install pdfplumber python-docx python-pptx openpyxl anthropic Pillow
-
-THEN RUN:
-    python scripts/scan_school.py
-
-Filter to one subject:
-    python scripts/scan_school.py --subject "Database Management"
-
-Skip image analysis (faster, no API calls):
-    python scripts/scan_school.py --no-vision
-"""
+"""Convert QUT Study documents to local notes; paid image vision is opt-in."""
 
 import os
 import re
@@ -31,14 +6,35 @@ import sys
 import json
 import base64
 import argparse
+import hashlib
+import tempfile
+import stat
 import xml.etree.ElementTree as ET
 from pathlib import Path
 from datetime import datetime
 
-# ── Paths ──────────────────────────────────────────────────────────────────
-SCHOOL_DIR = Path(os.environ.get("SCHOOL_DIR") or Path.home() / "Desktop" / "school")  # Override with SCHOOL_DIR env var
-VAULT_DIR  = Path(os.environ.get("VAULT_DIR") or Path(__file__).parent.parent)  # Override with VAULT_DIR env var
-OUTPUT_DIR = VAULT_DIR / "education"
+def resolve_paths(source=None, output=None, vault=None):
+    """Explicit CLI paths win over legacy environment configuration."""
+    source = Path(source or os.environ.get("QUT_STUDY_ROOT") or
+                  os.environ.get("SCHOOL_DIR") or Path.home() / "QUT Study").expanduser()
+    if output is not None and vault is not None:
+        raise ValueError("Choose --output or --vault, not both")
+    if output is not None:
+        destination = Path(output)
+    elif vault is not None:
+        destination = Path(vault) / "education"
+    elif os.environ.get("NOTES_DIR"):
+        destination = Path(os.environ["NOTES_DIR"])
+    elif os.environ.get("VAULT_DIR"):
+        destination = Path(os.environ["VAULT_DIR"]) / "education"
+    else:
+        destination = source / "notes"
+    return source, destination.expanduser()
+
+
+# Backward-compatible path constants; per-call configuration is resolved at runtime.
+SCHOOL_DIR, OUTPUT_DIR = resolve_paths()
+VAULT_DIR = Path(os.environ["VAULT_DIR"]).expanduser() if os.environ.get("VAULT_DIR") else None
 
 # ── File type groups ───────────────────────────────────────────────────────
 DOCUMENT_EXTS  = {".pdf", ".docx", ".doc", ".txt", ".md"}
@@ -49,7 +45,7 @@ DIAGRAM_EXTS   = {".drawio"}
 CODE_EXTS      = {".py", ".js", ".html", ".css", ".json", ".xml", ".yaml", ".yml"}
 ALL_SUPPORTED  = DOCUMENT_EXTS | SLIDE_EXTS | SHEET_EXTS | IMAGE_EXTS | DIAGRAM_EXTS | CODE_EXTS
 
-SKIP_DIRS  = {".obsidian", ".smart-env", ".claude", "node_modules", "__pycache__"}
+SKIP_DIRS  = {".obsidian", ".smart-env", ".claude", "node_modules", "__pycache__", "state", "venv", "env", "notes"}
 SKIP_FILES = {"thumbs.db", ".ds_store"}
 
 # ── Utility ────────────────────────────────────────────────────────────────
@@ -321,7 +317,7 @@ def extract_code_or_text(path: Path) -> str:
         return f"[ERROR reading file: {e}]"
 
 
-def extract_file(path: Path, use_vision: bool = True, anthropic_client=None) -> str:
+def extract_file(path: Path, use_vision: bool = False, anthropic_client=None) -> str:
     ext = path.suffix.lower()
 
     if ext == ".pdf":             return extract_pdf(path)
@@ -338,14 +334,14 @@ def extract_file(path: Path, use_vision: bool = True, anthropic_client=None) -> 
             return extract_image_vision(path, anthropic_client)
         else:
             size_kb = path.stat().st_size // 1024
-            return f"[Image file: {path.name} | {size_kb}KB]\n[Vision analysis skipped — run without --no-vision to analyse]"
+            return f"[Image file: {path.name} | {size_kb}KB]\n[Vision analysis skipped — run with --vision to analyse (paid Anthropic API)]"
 
     return f"[Unsupported file type: {ext}]"
 
 
-def build_note(file_path: Path, content: str) -> str:
+def build_note(file_path: Path, content: str, source=None) -> str:
     try:
-        rel = file_path.relative_to(SCHOOL_DIR)
+        rel = file_path.relative_to(source or SCHOOL_DIR)
     except ValueError:
         rel = Path(file_path.name)
 
@@ -355,13 +351,13 @@ def build_note(file_path: Path, content: str) -> str:
     now = datetime.now().strftime("%Y-%m-%d")
 
     return f"""---
-title: "{file_path.stem}"
-source: "{file_path}"
-subject: "{subject}"
-path: "{subfolder}"
+title: {json.dumps(file_path.stem)}
+source: {json.dumps(str(file_path))}
+subject: {json.dumps(subject)}
+path: {json.dumps(subfolder)}
 type: "{file_path.suffix.lower().lstrip('.')}"
 scanned: "{now}"
-tags: [education, {subject.lower().replace(' ', '-')}]
+tags: [education, {json.dumps(subject.lower().replace(' ', '-'))}]
 ---
 
 # {file_path.stem}
@@ -375,98 +371,200 @@ tags: [education, {subject.lower().replace(' ', '-')}]
 """
 
 
-# ── Main ───────────────────────────────────────────────────────────────────
+# ── Safe traversal and incremental conversion ──────────────────────────────
+MANIFEST_NAME = ".scan_school_manifest.json"
 
-def scan_and_convert(subject_filter: str = None, use_vision: bool = True):
-    # Optionally init Anthropic client for vision
-    anthropic_client = None
+
+def _linked(path):
+    # Junctions are directory links on Windows, but are not always symlinks.
+    if path.is_symlink() or getattr(path, "is_junction", lambda: False)():
+        return True
+    try:
+        return bool(getattr(path.lstat(), "st_file_attributes", 0) &
+                    getattr(stat, "FILE_ATTRIBUTE_REPARSE_POINT", 0))
+    except FileNotFoundError:
+        return False
+
+
+def _safe_target(path):
+    if any(_linked(p) for p in (path, *path.parents)):
+        raise ValueError(f"Refusing linked path: {path}")
+
+
+def _walk(source, output):
+    """Prune before descending, including nested generated output trees."""
+    for root, dirs, files in os.walk(source, followlinks=False):
+        parent = Path(root)
+        dirs[:] = sorted(d for d in dirs if not d.startswith((".", "$"))
+                         and d.lower() not in SKIP_DIRS
+                         and not _linked(parent / d)
+                         and not (parent / d / MANIFEST_NAME).exists()
+                         and (parent / d).resolve() != output)
+        yield parent, [name for name in sorted(files)
+                       if not name.startswith((".", "$"))
+                       and name.lower() not in SKIP_FILES
+                       and not _linked(parent / name)]
+
+
+def _hash(path):
+    digest = hashlib.sha256()
+    with path.open("rb") as stream:
+        for block in iter(lambda: stream.read(1024 * 1024), b""):
+            digest.update(block)
+    return digest.hexdigest()
+
+
+def _atomic_write(path, text):
+    _safe_target(path)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    temporary = None
+    try:
+        with tempfile.NamedTemporaryFile(mode="w", encoding="utf-8", newline="",
+                                         dir=path.parent, delete=False) as stream:
+            temporary = Path(stream.name)
+            stream.write(text)
+        os.replace(temporary, path)
+    finally:
+        if temporary is not None:
+            temporary.unlink(missing_ok=True)
+
+
+def _valid_content(content):
+    if not isinstance(content, str) or not content.strip():
+        return False
+    return not content.lstrip().startswith(("[ERROR", "[No extractable", "[No data",
+        "[Empty CSV]", "[Unsupported", "[draw.io file appears", "[draw.io file parsed"))
+
+
+def scan_and_convert(subject_filter=None, use_vision=False, *, source=None,
+                     output=None, vault=None):
+    """Scan locally, preserving user edits; return processed/skipped/errors/conflicts."""
+    source, output = resolve_paths(source, output, vault)
+    _safe_target(source)
+    _safe_target(output)
+    source, output = source.resolve(), output.resolve()
+    if not source.is_dir():
+        raise ValueError(f"Source must be an existing directory: {source}")
+    if output == source:
+        raise ValueError("Output must not equal source")
+    if output.exists() and not output.is_dir():
+        raise ValueError("Output must be a directory")
+    scan_root = source
+    if subject_filter:
+        matches = []
+        for parent, _ in _walk(source, output):
+            if parent != source and subject_filter.casefold() in parent.name.casefold():
+                matches.append(parent)
+        exact = [p for p in matches if p.name.casefold() == subject_filter.casefold()]
+        matches = exact or matches
+        if len(matches) != 1:
+            raise ValueError(f"Subject must match exactly one visible directory: {subject_filter!r} ({len(matches)} matches)")
+        scan_root = matches[0]
+
+    manifest_path = output / MANIFEST_NAME
+    _safe_target(manifest_path)
+    manifest = {"version": 1, "source": str(source), "files": {}}
+    if manifest_path.exists():
+        try:
+            manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+            if (manifest.get("version") != 1 or manifest.get("source") != str(source)
+                    or not isinstance(manifest.get("files"), dict)
+                    or any(not isinstance(v, dict) for v in manifest["files"].values())):
+                raise ValueError("Manifest schema or source mismatch")
+        except (ValueError, AttributeError) as exc:
+            raise ValueError(f"Invalid manifest; preserve it and resolve manually: {manifest_path}") from exc
+
+    client = None
     if use_vision:
+        # Explicit opt-in only. A failed setup must not silently claim vision success.
         try:
             import anthropic
-            anthropic_client = anthropic.Anthropic()
-            print("✅ Claude Vision enabled — images will be analysed")
-        except ImportError:
-            print("⚠️  anthropic package not found — pip install anthropic")
-            print("   Continuing without vision (images will be skipped)\n")
-            use_vision = False
-        except Exception as e:
-            print(f"⚠️  Could not init Anthropic client: {e}")
-            print("   Make sure ANTHROPIC_API_KEY is set as an environment variable")
-            print("   Continuing without vision\n")
-            use_vision = False
+            client = anthropic.Anthropic()
+        except Exception as exc:
+            raise ValueError(f"Cannot enable paid Anthropic vision: {exc}") from exc
 
-    # Determine scan root
-    scan_root = SCHOOL_DIR
-    if subject_filter:
-        for d in SCHOOL_DIR.rglob("*"):
-            if d.is_dir() and subject_filter.lower() in d.name.lower():
-                scan_root = d
-                print(f"🎯 Filtering to: {d}")
-                break
-
-    print(f"\n{'='*60}")
-    print(f"  School Folder Scanner")
-    print(f"  Source : {scan_root}")
-    print(f"  Output : {OUTPUT_DIR}")
-    print(f"  Vision : {'ON' if use_vision else 'OFF'}")
-    print(f"{'='*60}\n")
-
-    processed = skipped = errors = 0
-
-    for file_path in sorted(scan_root.rglob("*")):
-        if not file_path.is_file():
-            continue
-        if any(skip in file_path.parts for skip in SKIP_DIRS):
-            continue
-        if file_path.name.lower() in SKIP_FILES:
-            continue
-        if file_path.name.startswith(".") or file_path.name.startswith("$"):
-            continue
-        if file_path.suffix.lower() not in ALL_SUPPORTED:
-            skipped += 1
-            continue
-
-        # Mirror folder structure in output
-        try:
-            rel = file_path.relative_to(SCHOOL_DIR)
-        except ValueError:
-            rel = file_path.relative_to(scan_root)
-
-        out_folder = OUTPUT_DIR / rel.parent
-        out_folder.mkdir(parents=True, exist_ok=True)
-        out_file = out_folder / (safe_filename(file_path.stem) + ".md")
-
-        # Skip up-to-date files
-        if out_file.exists():
-            if out_file.stat().st_mtime >= file_path.stat().st_mtime:
-                skipped += 1
+    print(f"Source : {scan_root}\nOutput : {output}\nVision : {'ON (paid Anthropic)' if use_vision else 'OFF'}")
+    result = dict(processed=0, skipped=0, errors=0, conflicts=0)
+    for parent, names in _walk(scan_root, output):
+        for name in names:
+            path = parent / name
+            if not path.is_file() or path.suffix.lower() not in ALL_SUPPORTED:
+                result["skipped"] += 1
                 continue
+            rel = path.relative_to(source)
+            key = rel.as_posix()
+            # Include the original extension: a.pdf and a.txt cannot collide.
+            note_path = output / rel.parent / (path.name + ".md")
+            try:
+                _safe_target(note_path)
+                source_hash = _hash(path)
+                mode = bool(use_vision and path.suffix.lower() in IMAGE_EXTS)
+                entry = manifest["files"].get(key, {})
+                if (entry.get("source_hash") == source_hash
+                        and entry.get("vision") == mode and note_path.is_file()):
+                    # Never overwrite local edits merely because the source is unchanged.
+                    result["skipped"] += 1
+                    continue
+                pending = entry.get("conflict", {})
+                if pending.get("source_hash") == source_hash and pending.get("vision") == mode:
+                    conflict_path = output / pending.get("output", "")
+                    _safe_target(conflict_path)
+                    if conflict_path.is_relative_to(output) and conflict_path.is_file():
+                        # Preserve edits to the conflict copy too; no repeated duplicates.
+                        result["skipped"] += 1
+                        continue
+                content = extract_file(path, use_vision=use_vision, anthropic_client=client)
+                if not _valid_content(content):
+                    raise ValueError(f"Extraction failed: {str(content)[:200]}")
+                if _hash(path) != source_hash:
+                    raise ValueError("Source changed during extraction; retry")
+                note = build_note(path, content, source=source)
+                edited = note_path.exists() and (
+                    not entry.get("note_hash") or _hash(note_path) != entry["note_hash"])
+                if edited:
+                    target = note_path.with_name(f"{path.name}.conflict-{source_hash[:12]}.md")
+                    counter = 1
+                    while target.exists() or _linked(target):
+                        target = note_path.with_name(f"{path.name}.conflict-{source_hash[:12]}-{counter}.md")
+                        counter += 1
+                    _atomic_write(target, note)
+                    entry["conflict"] = dict(source_hash=source_hash, vision=mode,
+                        output=target.relative_to(output).as_posix(), note_hash=_hash(target))
+                    manifest["files"][key] = entry
+                    result["conflicts"] += 1
+                    print(f"Conflict (local edits preserved): {target}")
+                else:
+                    _atomic_write(note_path, note)
+                    manifest["files"][key] = dict(source_hash=source_hash,
+                        note_hash=_hash(note_path), output=note_path.relative_to(output).as_posix(), vision=mode)
+                    result["processed"] += 1
+            except Exception as exc:
+                result["errors"] += 1
+                print(f"Error: {rel}: {exc}")
+    _atomic_write(manifest_path, json.dumps(manifest, indent=2, ensure_ascii=False) + "\n")
+    print("Done! " + " | ".join(f"{k}: {v}" for k, v in result.items()))
+    return result
 
-        ext_label = file_path.suffix.upper().lstrip(".")
-        print(f"  [{ext_label:6}] {rel}")
 
-        try:
-            content = extract_file(file_path, use_vision=use_vision, anthropic_client=anthropic_client)
-            note    = build_note(file_path, content)
-            out_file.write_text(note, encoding="utf-8")
-            print(f"           ✅ → education/{rel.parent}/{out_file.name}")
-            processed += 1
-        except Exception as e:
-            print(f"           ❌ Error: {e}")
-            errors += 1
-
-    print(f"\n{'='*60}")
-    print(f"  Done!  Processed: {processed} | Skipped: {skipped} | Errors: {errors}")
-    print(f"  Notes saved to: {OUTPUT_DIR}")
-    print(f"{'='*60}\n")
-    if processed > 0:
-        print("💡 Claude can now read all notes directly via Obsidian MCP.")
-        print('   Just say "load my [subject] context" in any session.\n')
+def main(argv=None):
+    parser = argparse.ArgumentParser(description="Convert school files to local Markdown notes (vision off by default)")
+    parser.add_argument("--source", type=Path, help="Source (default: QUT_STUDY_ROOT or ~/QUT Study)")
+    destination = parser.add_mutually_exclusive_group()
+    destination.add_argument("--output", type=Path, help="Notes destination (default: source/notes)")
+    destination.add_argument("--vault", type=Path, help="Explicit vault; writes to vault/education")
+    parser.add_argument("--subject", help="One matching visible subject directory; no fallback")
+    vision = parser.add_mutually_exclusive_group()
+    vision.add_argument("--vision", action="store_true", help="Opt in to paid Anthropic API image uploads")
+    vision.add_argument("--no-vision", action="store_true", help="Compatibility flag: vision is already off")
+    args = parser.parse_args(argv)
+    try:
+        result = scan_and_convert(args.subject, args.vision, source=args.source,
+                                  output=args.output, vault=args.vault)
+        return 1 if result["errors"] else 0
+    except (ValueError, OSError) as exc:
+        print(f"Error: {exc}", file=sys.stderr)
+        return 2
 
 
 if __name__ == "__main__":
-    parser = argparse.ArgumentParser(description="Scan school folder → Obsidian markdown notes")
-    parser.add_argument("--subject",   type=str, default=None, help='Filter to one subject e.g. "Database Management"')
-    parser.add_argument("--no-vision", action="store_true",    help="Skip Claude Vision image analysis (faster)")
-    args = parser.parse_args()
-    scan_and_convert(subject_filter=args.subject, use_vision=not args.no_vision)
+    sys.exit(main())
