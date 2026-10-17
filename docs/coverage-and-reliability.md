@@ -10,7 +10,7 @@ is absent. Byte-range partial-download resume remains unimplemented.
 ## Executed locally on Windows
 
 - Python 3.11 and 3.12: `python -B -m unittest discover -s tests -q`:
-  **133 tests; OK (skipped=3)** on each environment. Permission/optional-dependency
+  **142 tests; OK (skipped=3)** on each environment. Permission/optional-dependency
   skips remain explicit; no live credentials are required by the suite.
 - `python -m compileall -q scripts tests` and `git diff --check`: passed.
 - Real local RapidOCR smoke: generated PNG, scanned PDF, DOCX embedded image and

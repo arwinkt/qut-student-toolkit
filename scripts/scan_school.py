@@ -430,17 +430,8 @@ def _hash(path):
 
 def _atomic_write(path, text):
     _safe_target(path)
-    path.parent.mkdir(parents=True, exist_ok=True)
-    temporary = None
-    try:
-        with tempfile.NamedTemporaryFile(mode="w", encoding="utf-8", newline="",
-                                         dir=path.parent, delete=False) as stream:
-            temporary = Path(stream.name)
-            stream.write(text)
-        os.replace(temporary, path)
-    finally:
-        if temporary is not None:
-            temporary.unlink(missing_ok=True)
+    from qut_toolkit.storage import atomic_write
+    atomic_write(path, text.encode("utf-8"))
 
 
 def _valid_content(content):

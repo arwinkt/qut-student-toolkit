@@ -90,7 +90,7 @@ def main(argv=None):
     try:
         if args.command=='sync':
             locks.enter_context(writer_lock(config.root))
-            if config.notes_root: locks.enter_context(writer_lock(config.notes_root))
+            if config.notes_root: locks.enter_context(writer_lock(config.notes_root/'qut-toolkit'))
         if args.cdp_url:
             factory=getattr(CanvasClient,'from_cdp',None)
             if factory is None: raise CanvasError('unsupported','Browser transport unavailable')

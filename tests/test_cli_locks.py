@@ -5,6 +5,15 @@ from qut_toolkit.locking import writer_lock
 ROOT=Path(__file__).resolve().parents[1]
 
 class CLILockTests(unittest.TestCase):
+    def test_notes_mirror_contends_on_actual_managed_subdirectory(self):
+        with tempfile.TemporaryDirectory() as d:
+            base=Path(d).resolve();notes=base/'notes';library=base/'library'
+            with writer_lock(notes/'qut-toolkit'):
+                result=subprocess.run([sys.executable,str(ROOT/'scripts/qut_sync.py'),'sync','7','--root',str(library),'--notes-root',str(notes)],capture_output=True,text=True,timeout=20)
+            self.assertEqual(result.returncode,1,result.stdout+result.stderr)
+            self.assertIn('busy',result.stderr.lower())
+            self.assertFalse((library/'units').exists())
+
     def test_public_writers_refuse_contention_before_checkpoint_changes(self):
         with tempfile.TemporaryDirectory() as d:
             base=Path(d).resolve();library=base/'library';source=base/'source';source.mkdir();(source/'a.txt').write_text('synthetic')
