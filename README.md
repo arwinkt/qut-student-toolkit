@@ -225,9 +225,12 @@ Resources with unchanged Canvas `updated_at` **and** size can reuse a hash-verif
 cached original. If metadata is missing or changes, bytes are fetched and hashed
 again. Provider metadata can be wrong; this is not an immutable remote audit.
 
-There is currently no simultaneous-writer locking: **do not run two syncs against
-the same output folder at once**. Originals plus working copies, conflicts and an
-optional vault mirror can use more than twice the raw course download size.
+The sync/transcript CLIs acquire a nonblocking OS-backed output-root lock.
+A second cooperating writer exits without changing checkpoints. Locks release on
+process exit; the persistent `.qut-writer.lock` file is not itself a busy signal.
+Direct Python API callers must use `qut_toolkit.locking.writer_lock` around a run.
+Use local disks; network-share locking has not been verified. Originals, working
+copies, conflicts and optional mirrors can use more than twice the raw download size.
 
 ## Convert documents to searchable notes
 
@@ -267,8 +270,8 @@ Pass `--source` when the library uses a custom root, or set `QUT_STUDY_ROOT` for
 | Broken/malformed source links | Keep the failed URL in the report and use a valid course/module link if available. Staff may need to repair the source; retries alone do not fix a genuinely missing page. |
 | Large files skipped | The default advertised per-file limit is 100 MiB. Raise `--max-file-bytes` deliberately for a needed file, and check free disk space. It is not a hard streaming/network-byte limit. OS images and software installers are not needed for transcript export. |
 | No captions, or unsupported recording provider | Report unavailable/unsupported rather than inventing text. Existing Echo360 captions are supported; other providers may need new adapters. Audio transcription is not included. |
-| Image-only slides/questions | Saving the original is not text extraction. Open it visually or use a separately chosen OCR tool. Built-in offline OCR is not currently provided; paid image analysis requires explicit opt-in and sends data to its provider. |
-| Concurrent writers | Run only one sync per output root. Locking is not implemented; local-edit preservation is not a substitute for writer coordination. |
+| Image-only slides/questions | Saving the original is not text extraction. Open it visually or use a separately chosen OCR tool. Optional local OCR is provided (see below); paid image analysis requires explicit opt-in and sends data to its provider. |
+| Concurrent writers | The CLIs reject a second cooperating writer with an OS-backed lock. Direct API callers must acquire writer_lock; network shares are unverified. |
 | Storage grows | Working copies, originals, conflicts and optional mirrors use extra disk space. No automatic destructive cleanup is performed. |
 | Session expiry / locked browser profile | Re-run login when needed; close other toolkit processes using that private profile before reopening it. Do not share browser/session files. |
 
@@ -280,6 +283,47 @@ must not be advertised as a fresh check of the entire semester.
 These restrictions are the same on Windows and macOS. OS compatibility cannot grant
 extra Canvas permissions. See [verification details](docs/verification.md) for the
 boundary between synthetic platform tests and real authenticated acceptance.
+
+## Browser-visible fallback and reconciliation
+
+```sh
+python scripts/qut_sync.py sync COURSE_ID --browser-inventory --cdp-url http://127.0.0.1:9222
+python scripts/qut_transcripts.py --course-id COURSE_ID --browser-inventory
+```
+
+Without CDP, the browser fallback uses the toolkit's existing private login profile.
+It opens only its own tab, reads bounded same-course pages, expands module views,
+follows ordinary module-link redirects without launching LTI, and records visible
+references. Edit/submit actions and off-course navigation are blocked. Explicit
+`visible-reconciliation.json` / `.md` files match observed links to actual saved
+paths, preserving module associations. A visible link is not proof its file can be
+downloaded; hidden/unpublished content remains unknown. Partial expansion and page
+budgets are reported, not called complete. Browser fallback does not bypass API or
+course permissions. A normal browser check may establish that an old link is gone.
+
+Safe GET requests retry transient network/429/5xx failures with a shared bounded
+budget. Authentication/access failures are not repeatedly retried. Windows atomic
+save sharing violations also have bounded retries; failed writes do not become
+successful checkpoints. Partial download byte-range resume is not implemented:
+failed GETs restart, while verified unchanged originals are reused across runs.
+
+## Optional local OCR (no paid service)
+
+```sh
+python -m pip install rapidocr-onnxruntime Pillow PyMuPDF
+python scripts/scan_school.py --source "~/QUT Study" --ocr --ocr-backend rapidocr --no-vision
+```
+
+RapidOCR uses the installed package's bundled ONNX models, checks they exist, and
+does not download models during extraction. It runs in a deadline-bounded child
+process. Alternatively install `pytesseract`, a local Tesseract executable and its
+language data, then use `--ocr --ocr-backend tesseract` (the default backend).
+Image files, scanned PDFs and embedded DOCX/PPTX images are supported with page,
+pixel and time budgets. Native text and original documents remain intact; OCR is a
+labeled supplement, not an authoritative transcription. Empty/failed/limited OCR
+stays INCOMPLETE. OCR mode/backend are checkpointed so an opt-in can reprocess
+previously extracted images without overwriting local edits. The scanner also
+locks its output folder. No cloud upload or paid vision is enabled by `--ocr`.
 
 ## Existing command names
 

@@ -317,8 +317,16 @@ def extract_code_or_text(path: Path) -> str:
         return f"[ERROR reading file: {e}]"
 
 
-def extract_file(path: Path, use_vision: bool = False, anthropic_client=None) -> str:
+def extract_file(path: Path, use_vision: bool = False, anthropic_client=None,
+                 use_ocr: bool = False, ocr_backend='tesseract') -> str:
     ext = path.suffix.lower()
+    if use_ocr:
+        from qut_toolkit.local_ocr import SUPPORTED, extract_local_ocr
+        if ext in SUPPORTED:
+            # OCR is independent of paid vision and never enables it implicitly.
+            native = extract_file(path, use_vision=use_vision, anthropic_client=anthropic_client)
+            supplement = extract_local_ocr(path, native_text=native, backend=ocr_backend)
+            return native + "\n\n" + supplement
 
     if ext == ".pdf":             return extract_pdf(path)
     if ext in (".docx", ".doc"): return extract_docx(path)
@@ -443,7 +451,7 @@ def _valid_content(content):
 
 
 def scan_and_convert(subject_filter=None, use_vision=False, *, source=None,
-                     output=None, vault=None):
+                     output=None, vault=None, use_ocr=False, ocr_backend='tesseract'):
     """Scan locally, preserving user edits; return processed/skipped/errors/conflicts."""
     source, output = resolve_paths(source, output, vault)
     _safe_target(source)
@@ -468,6 +476,12 @@ def scan_and_convert(subject_filter=None, use_vision=False, *, source=None,
             raise ValueError(f"Subject must match exactly one visible directory: {subject_filter!r} ({len(matches)} matches)")
         scan_root = matches[0]
 
+    from qut_toolkit.locking import writer_lock
+    with writer_lock(output):
+        return _scan_locked(source, output, scan_root, use_vision, use_ocr, ocr_backend)
+
+
+def _scan_locked(source, output, scan_root, use_vision, use_ocr, ocr_backend):
     manifest_path = output / MANIFEST_NAME
     _safe_target(manifest_path)
     manifest = {"version": 1, "source": str(source), "files": {}}
@@ -506,22 +520,37 @@ def scan_and_convert(subject_filter=None, use_vision=False, *, source=None,
                 _safe_target(note_path)
                 source_hash = _hash(path)
                 mode = bool(use_vision and path.suffix.lower() in IMAGE_EXTS)
+                ocr_mode = bool(use_ocr and path.suffix.lower() in
+                    (IMAGE_EXTS | {".pdf", ".docx", ".pptx", ".pptm", ".ppsx"}))
                 entry = manifest["files"].get(key, {})
                 if (entry.get("source_hash") == source_hash
-                        and entry.get("vision") == mode and note_path.is_file()):
+                        and entry.get("vision") == mode
+                        and entry.get("ocr", False) == ocr_mode
+                        and entry.get("ocr_backend") == (ocr_backend if ocr_mode else None)
+                        and entry.get("complete", True) and note_path.is_file()):
                     # Never overwrite local edits merely because the source is unchanged.
                     result["skipped"] += 1
                     continue
                 pending = entry.get("conflict", {})
-                if pending.get("source_hash") == source_hash and pending.get("vision") == mode:
+                if (pending.get("source_hash") == source_hash and pending.get("vision") == mode
+                        and pending.get("ocr", False) == ocr_mode
+                        and pending.get("ocr_backend") == (ocr_backend if ocr_mode else None)
+                        and pending.get("complete", True)):
                     conflict_path = output / pending.get("output", "")
                     _safe_target(conflict_path)
                     if conflict_path.is_relative_to(output) and conflict_path.is_file():
                         # Preserve edits to the conflict copy too; no repeated duplicates.
                         result["skipped"] += 1
                         continue
-                content = extract_file(path, use_vision=use_vision, anthropic_client=client)
-                if not _valid_content(content):
+                options = dict(use_vision=use_vision, anthropic_client=client)
+                if ocr_mode:
+                    options["use_ocr"] = True
+                    options["ocr_backend"] = ocr_backend
+                content = extract_file(path, **options)
+                incomplete = ocr_mode and "[OCR INCOMPLETE:" in content
+                # Preserve native text and honest OCR diagnostics even on partial failure.
+                if not _valid_content(content) and not (ocr_mode and
+                        ("## Supplemental local OCR" in content or incomplete)):
                     raise ValueError(f"Extraction failed: {str(content)[:200]}")
                 if _hash(path) != source_hash:
                     raise ValueError("Source changed during extraction; retry")
@@ -536,6 +565,7 @@ def scan_and_convert(subject_filter=None, use_vision=False, *, source=None,
                         counter += 1
                     _atomic_write(target, note)
                     entry["conflict"] = dict(source_hash=source_hash, vision=mode,
+                        ocr=ocr_mode, ocr_backend=ocr_backend if ocr_mode else None, complete=not incomplete,
                         output=target.relative_to(output).as_posix(), note_hash=_hash(target))
                     manifest["files"][key] = entry
                     result["conflicts"] += 1
@@ -543,8 +573,13 @@ def scan_and_convert(subject_filter=None, use_vision=False, *, source=None,
                 else:
                     _atomic_write(note_path, note)
                     manifest["files"][key] = dict(source_hash=source_hash,
-                        note_hash=_hash(note_path), output=note_path.relative_to(output).as_posix(), vision=mode)
-                    result["processed"] += 1
+                        note_hash=_hash(note_path), output=note_path.relative_to(output).as_posix(),
+                        vision=mode, ocr=ocr_mode, ocr_backend=ocr_backend if ocr_mode else None, complete=not incomplete)
+                    if not incomplete:
+                        result["processed"] += 1
+                if incomplete:
+                    result["errors"] += 1
+                    print(f"Incomplete local OCR: {rel}; see note for diagnostics")
             except Exception as exc:
                 result["errors"] += 1
                 print(f"Error: {rel}: {exc}")
@@ -563,12 +598,17 @@ def main(argv=None):
     vision = parser.add_mutually_exclusive_group()
     vision.add_argument("--vision", action="store_true", help="Opt in to paid Anthropic API image uploads")
     vision.add_argument("--no-vision", action="store_true", help="Compatibility flag: vision is already off")
+    parser.add_argument("--ocr", action="store_true",
+                        help="Opt in to local Tesseract OCR (Pillow/pytesseract; PDF rendering needs PyMuPDF)")
+    parser.add_argument("--ocr-backend", choices=("tesseract","rapidocr"), default="tesseract",
+                        help="Local OCR engine; rapidocr uses bundled ONNX models without a system Tesseract install")
     args = parser.parse_args(argv)
     try:
+        from qut_toolkit.locking import WriterLockError
         result = scan_and_convert(args.subject, args.vision, source=args.source,
-                                  output=args.output, vault=args.vault)
+                                  output=args.output, vault=args.vault, use_ocr=args.ocr, ocr_backend=args.ocr_backend)
         return 1 if result["errors"] else 0
-    except (ValueError, OSError) as exc:
+    except (ValueError, OSError, WriterLockError) as exc:
         print(f"Error: {exc}", file=sys.stderr)
         return 2
 

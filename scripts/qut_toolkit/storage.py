@@ -7,6 +7,8 @@ from pathlib import Path, PurePosixPath
 import re
 import tempfile
 import unicodedata
+from .locking import checked_root
+from .retry import retry_call
 
 
 def is_link(path):
@@ -49,15 +51,15 @@ def atomic_write(path, data):
             f.write(data)
             f.flush()
             os.fsync(f.fileno())
-        os.replace(name,path)
+        retry_call(lambda: os.replace(name,path),
+                   lambda exc: isinstance(exc, OSError) and getattr(exc, 'winerror', None) in (32, 33))
     finally:
         if os.path.exists(name): os.unlink(name)
 
 
 class Store:
     def __init__(self, root):
-        self.root = Path(root).resolve()
-        self.root.mkdir(parents=True, exist_ok=True)
+        self.root = checked_root(root)
         self.manifest_path = self.path('manifest.json')
         self.manifest = json.loads(self.manifest_path.read_text(encoding='utf-8')) if self.manifest_path.exists() else {'version':1,'entries':{},'last_success':None}
         self.events = []
@@ -105,9 +107,12 @@ class Store:
         return status
 
     def save(self, complete=None, errors=None):
+        # Publish checkpoint fields in memory only after the atomic save succeeds.
+        candidate = dict(self.manifest)
         if complete is not None:
-            self.manifest['last_attempt']=utc_now()
-            self.manifest['complete']=bool(complete)
-            self.manifest['errors']=errors or []
-            if complete: self.manifest['last_success']=self.manifest['last_attempt']
-        atomic_write(self.manifest_path,(json.dumps(self.manifest,indent=2,ensure_ascii=False)+'\n').encode())
+            candidate['last_attempt']=utc_now()
+            candidate['complete']=bool(complete)
+            candidate['errors']=errors or []
+            if complete: candidate['last_success']=candidate['last_attempt']
+        atomic_write(self.manifest_path,(json.dumps(candidate,indent=2,ensure_ascii=False)+'\n').encode())
+        self.manifest.update(candidate)

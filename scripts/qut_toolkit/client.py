@@ -1,10 +1,12 @@
 """Timeout-bounded Canvas transport. Never forward auth across origin boundaries."""
 import json
+from http.client import HTTPException
 import re
 import time
 from urllib.error import HTTPError, URLError
 from urllib.parse import urljoin, urlsplit, urlunsplit
 from urllib.request import Request, build_opener, HTTPRedirectHandler
+from .retry import MAX_ATTEMPTS, retry_delay
 
 
 def origin(url):
@@ -25,9 +27,10 @@ def public_url(url):
 
 
 class CanvasError(Exception):
-    def __init__(self, kind, message, status=None):
+    def __init__(self, kind, message, status=None, retry_after=None):
         super().__init__(message)
         self.kind, self.status = kind, status
+        self.retry_after = retry_after
     def as_dict(self):
         return {'kind': self.kind, 'message': str(self), 'status': self.status}
 
@@ -100,11 +103,15 @@ class CanvasClient:
             with self.opener.open(Request(url, headers=headers), timeout=timeout) as r:
                 return r.read(), dict(r.headers)
         except HTTPError as exc:
-            if exc.code in (301,302,303,307,308):
-                return b'', {'Location': exc.headers.get('Location',''), '_status':exc.code}
-            kind = 'auth' if exc.code == 401 else 'access' if exc.code == 403 else 'http'
-            raise CanvasError(kind, 'Canvas request rejected', exc.code) from None
-        except (URLError, TimeoutError, OSError) as exc:
+            try:
+                if exc.code in (301,302,303,307,308):
+                    return b'', {'Location': exc.headers.get('Location',''), '_status':exc.code}
+                kind = 'auth' if exc.code == 401 else 'access' if exc.code == 403 else 'http'
+                raise CanvasError(kind, 'Canvas request rejected', exc.code,
+                                  (exc.headers or {}).get('Retry-After')) from None
+            finally:
+                exc.close()
+        except (URLError, TimeoutError, OSError, HTTPException) as exc:
             raise CanvasError('network', 'Network request failed or timed out') from None
 
     def _request(self, url, api=False):
@@ -114,6 +121,8 @@ class CanvasClient:
             raise CanvasError('unsafe_url','API URL must have exact Canvas origin')
         # Once a redirect leaves Canvas, credentials stay stripped on the entire chain.
         auth_allowed = initial == self.origin
+        # A shared budget across the entire redirect chain: two extra GETs maximum.
+        failures = 0
         for _ in range(11):
             target = origin(url)
             if api and target != self.origin:
@@ -121,11 +130,36 @@ class CanvasClient:
             auth_allowed = auth_allowed and target == self.origin
             headers = {'Accept':'application/json' if api else '*/*', 'User-Agent':'qut-toolkit/0.1'}
             if auth_allowed: headers.update(self.headers)
-            try: body, response_headers = self.transport(url, headers, self.timeout)
-            except CanvasError: raise
-            except (OSError, TimeoutError) as exc:
-                raise CanvasError('network','Network request failed or timed out') from None
-            response_headers = {k.lower():v for k,v in response_headers.items()}
+            while True:
+                try:
+                    try:
+                        body, response_headers = self.transport(url, headers, self.timeout)
+                    except HTTPError as exc:
+                        # HTTPError is also URLError/OSError: classify auth first.
+                        try:
+                            kind = 'auth' if exc.code == 401 else 'access' if exc.code == 403 else 'http'
+                            raise CanvasError(kind, 'Canvas request rejected', exc.code,
+                                              (exc.headers or {}).get('Retry-After')) from None
+                        finally:
+                            exc.close()
+                    except (URLError, OSError, TimeoutError, HTTPException):
+                        raise CanvasError('network','Network request failed or timed out') from None
+                    response_headers = {k.lower():v for k,v in response_headers.items()}
+                    status = int(response_headers.get('_status', 200))
+                    if status >= 400:
+                        kind = 'auth' if status == 401 else 'access' if status == 403 else 'http'
+                        raise CanvasError(kind, 'Canvas request rejected', status,
+                                          response_headers.get('retry-after'))
+                    break
+                except CanvasError as exc:
+                    retryable = (exc.status not in (401, 403) and
+                                 (exc.kind == 'network' or
+                                  (exc.kind == 'http' and exc.status is not None and
+                                   (exc.status == 429 or 500 <= exc.status <= 599))))
+                    if not retryable or failures >= MAX_ATTEMPTS - 1:
+                        raise
+                    time.sleep(retry_delay(failures, exc.retry_after))
+                    failures += 1
             if 'location' not in response_headers:
                 return body, response_headers
             url = urljoin(url, response_headers['location'])

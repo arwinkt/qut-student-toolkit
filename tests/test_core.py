@@ -55,7 +55,10 @@ class CoreTests(unittest.TestCase):
             return b'[{"id":1}]', {'Link':'<https://canvas.qut.edu.au/api/v1/courses?page=2>; rel="next"'}
         c=CanvasClient(headers={'Cookie':'synthetic'}, transport=transport)
         with self.assertRaises(CanvasError): c.list('/api/v1/courses')
-        self.assertEqual(len(seen),2)
+        # Supersedes immediate network-failure behavior: one first-page GET,
+        # then the shared budget of three bounded attempts for page two.
+        self.assertEqual(len(seen),4)
+        self.assertTrue(all('page=2' in x[0] for x in seen[1:]))
     def test_off_origin_pagination_rejected(self):
         c=CanvasClient(transport=lambda *a:(b'[]',{'Link':'<https://evil.invalid/x>; rel="next"'}))
         with self.assertRaises(CanvasError): c.list('/api/v1/courses')

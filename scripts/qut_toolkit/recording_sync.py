@@ -9,8 +9,12 @@ from .echo import discover_recordings, capture_page, safe_canvas_url, AuthNeeded
 from .storage import Store, identifier, utc_now, is_link
 
 
-def course_sources(client,cid):
-    """Return unique durable Canvas launch pages and explicit discovery failures."""
+def course_sources(client,cid,browser_inventory=None):
+    """Return unique durable Canvas launch pages and explicit discovery failures.
+
+    Optional browser_inventory(str_course_id) seeds visible same-course page refs;
+    bind visible.browser_inventory to an authorized BrowserSession with partial.
+    """
     cid=identifier(cid)
     sources={}
     errors=[]
@@ -39,6 +43,19 @@ def course_sources(client,cid):
                         sources[source]={'source_url':public_url(source),'title':item.get('title') or 'Recording','kinds':['echo360']}
     except CanvasError as exc:
         failed('modules',exc)
+    if browser_inventory is not None:
+        from .visible import normalize_inventory
+        try:
+            visible=normalize_inventory(browser_inventory(cid),client.base_url,cid)
+            for resource in visible['resources']:
+                if resource['kind']=='page':
+                    refs.setdefault(resource['id'],{'url':resource['id'],'title':resource['title']})
+                elif resource['kind'] in ('external_tool','module_item') and 'echo' in resource['title'].lower():
+                    sources[resource['url']]={'source_url':resource['url'],'title':resource['title'],'kinds':['echo360']}
+            errors.append({'stage':'browser inventory','kind':'visible_only_coverage',
+                           'message':'Bounded/visible-only discovery; hidden and unlinked sources remain unknown'})
+        except Exception as exc:
+            failed('browser inventory',exc)
     for page in refs.values():
         slug=str(page.get('url') or '')
         if not slug:
