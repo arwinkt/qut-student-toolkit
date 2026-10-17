@@ -8,7 +8,37 @@ Built for a student's own authorised course access. This is not an official QUT 
 
 ## Quick start
 
-Python **3.11+**. Run commands from the cloned repository folder.
+Python **3.11+** and Git. Windows and macOS use the same toolkit and output
+layout; no WSL, Xcode, Obsidian or AI subscription is required. Install a supported
+Python from python.org if needed, then clone this repository and open its folder.
+
+### Windows (PowerShell)
+
+```powershell
+# Example uses Python 3.12; use -3.11 if that is your installed supported version.
+py -3.12 -m venv .venv
+.\.venv\Scripts\Activate.ps1
+```
+
+If PowerShell blocks activation, do not change system policy just for this tool:
+use `.\.venv\Scripts\python.exe` instead of `python` in the commands below.
+
+### macOS (Terminal)
+
+```sh
+python3 --version  # Must be 3.11 or newer; older system Python is not sufficient.
+python3 -m venv .venv
+source .venv/bin/activate
+```
+
+If several Python versions are installed, create the environment with a supported
+interpreter such as `python3.12`. Apple Silicon uses the native Python/Chromium
+builds supplied by the installers; no Windows executables are used.
+
+### Both platforms — from the repository folder
+
+Once the environment is active, `python` refers to that environment on either OS.
+`"~/QUT Study"` is expanded by the toolkit to your own home directory on both.
 
 ```sh
 # Browser login/caption support; the core sync itself uses Python's standard library.
@@ -220,8 +250,36 @@ Image analysis is optional and paid: install `anthropic` and explicitly choose
 Do not share keys. See [scanner reference](scripts/scan_school_README.md) for formats,
 legacy environment variables, dependency limits and subject filtering.
 
+The scanner refuses linked source/output roots and linked ancestors as a safety
+boundary. Choose the physical directory rather than a symlink/junction alias;
+for example, macOS `/var/...` temporary paths physically live under `/private/var/...`.
+Ordinary `~/QUT Study` paths do not require using a temporary directory.
+
 The scanner has its own path configuration; it does not read `~/.qut-toolkit.json`.
 Pass `--source` when the library uses a custom root, or set `QUT_STUDY_ROOT` for both.
+
+## Limitations: what can be fixed, and what needs course access
+
+| Limitation | Meaning and practical next step |
+|---|---|
+| Pages/Files listing is denied (404/403) | Module references and accessible linked pages/files are followed instead. Hidden/unlinked material cannot be ruled out. Compare the local module index with Canvas; staff control access. A successful transcript export does not turn partial discovery into full-course coverage. |
+| A referenced file itself returns 403 | It was not downloaded. Verify the link in your enrolled browser and refresh your login if expired; if still denied, request access or a corrected link from teaching staff. The toolkit does not bypass permissions. |
+| Broken/malformed source links | Keep the failed URL in the report and use a valid course/module link if available. Staff may need to repair the source; retries alone do not fix a genuinely missing page. |
+| Large files skipped | The default advertised per-file limit is 100 MiB. Raise `--max-file-bytes` deliberately for a needed file, and check free disk space. It is not a hard streaming/network-byte limit. OS images and software installers are not needed for transcript export. |
+| No captions, or unsupported recording provider | Report unavailable/unsupported rather than inventing text. Existing Echo360 captions are supported; other providers may need new adapters. Audio transcription is not included. |
+| Image-only slides/questions | Saving the original is not text extraction. Open it visually or use a separately chosen OCR tool. Built-in offline OCR is not currently provided; paid image analysis requires explicit opt-in and sends data to its provider. |
+| Concurrent writers | Run only one sync per output root. Locking is not implemented; local-edit preservation is not a substitute for writer coordination. |
+| Storage grows | Working copies, originals, conflicts and optional mirrors use extra disk space. No automatic destructive cleanup is performed. |
+| Session expiry / locked browser profile | Re-run login when needed; close other toolkit processes using that private profile before reopening it. Do not share browser/session files. |
+
+**INCOMPLETE means incomplete coverage, not that successful downloads are discarded.**
+Use the reports to distinguish saved artifacts, intentional exclusions and failures.
+A normal later sync checks for newly available content; an interrupted-run resume
+must not be advertised as a fresh check of the entire semester.
+
+These restrictions are the same on Windows and macOS. OS compatibility cannot grant
+extra Canvas permissions. See [verification details](docs/verification.md) for the
+boundary between synthetic platform tests and real authenticated acceptance.
 
 ## Existing command names
 
@@ -252,6 +310,11 @@ python -B -m unittest discover -s tests -v
 python -m compileall -q scripts tests
 ```
 
-Tests use synthetic content and no live accounts. Live browser/caption checks were
-performed on Windows 11; macOS/Linux execution is not yet verified. No credentials
-or actual lecture text belong in test fixtures.
+Tests use synthetic content and no live accounts. CI covers Windows, macOS and
+Ubuntu with Python 3.11/3.12, installs the documented optional dependencies, and
+runs an actual Chromium persistent-profile/loopback smoke as well as the unit suite.
+Check the latest workflow results before treating a commit as verified.
+Live QUT login/MFA and real caption acceptance were exercised on Windows 11;
+these have **not** been exercised with a real QUT account on a physical Mac.
+The macOS runner covers its current hardware architecture, not every historical
+Intel Mac/macOS release. No credentials or lecture text belong in test fixtures.
