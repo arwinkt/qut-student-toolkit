@@ -15,6 +15,7 @@ Python from python.org if needed, then clone this repository and open its folder
 ### Windows (PowerShell)
 
 ```powershell
+# Example uses Python 3.12; use -3.11 if that is your installed supported version.
 py -3.12 -m venv .venv
 .\.venv\Scripts\Activate.ps1
 ```

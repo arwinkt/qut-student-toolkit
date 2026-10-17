@@ -45,18 +45,23 @@ def main():
             with BrowserSession(profile=profile) as session:
                 assert session.context is not None
                 session.context.add_cookies([{
-                    'name': 'toolkit_smoke', 'value': 'synthetic', 'url': base,
+                    'name': 'toolkit_smoke', 'value': 'synthetic',
+                    'domain': '127.0.0.1', 'path': '/allowed',
                     'expires': time.time() + 3600,
                 }])
                 page = session.context.new_page()
-                page.goto(base)
+                page.goto(base + '/allowed')
                 assert json.loads(page.inner_text('body'))['synthetic']
-                data, _ = session.transport(base, {}, 10)
+                data, _ = session.transport(base + '/allowed', {}, 10)
                 assert json.loads(data)['cookie_received']
+                data, _ = session.transport(base + '/denied', {}, 10)
+                assert not json.loads(data)['cookie_received']
             # A second actual process launch checks persistent-profile reuse.
             with BrowserSession(profile=profile) as session:
-                data, _ = session.transport(base, {}, 10)
+                data, _ = session.transport(base + '/allowed', {}, 10)
                 assert json.loads(data)['cookie_received']
+                data, _ = session.transport(base + '/denied', {}, 10)
+                assert not json.loads(data)['cookie_received']
         print('PASS: Unicode/spaced paths, atomic write, Chromium launch, local page, '
               'cookie-scoped transport, persistent-profile reopen and cleanup.')
     finally:

@@ -17,7 +17,7 @@ edits/conflicts, source traversal, assessment visibility, CLI entrypoints, capti
 scanner traversal and extraction failures, and independent-review regressions.
 
 Also executed: compileall, CLI help smoke checks, non-secret setup/sync/report
-fixtures, and `git diff --check`. A Windows/Linux Python 3.11/3.12 CI workflow is
+fixtures, and `git diff --check`. A Windows/macOS/Ubuntu Python 3.11/3.12 CI workflow is
 included. GitHub CI status must be checked on the exact published commit before merging.
 
 ## Real authenticated acceptance (private evidence outside Git)
