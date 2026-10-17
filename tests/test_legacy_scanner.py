@@ -22,7 +22,9 @@ class ScannerTests(unittest.TestCase):
     def setUp(self):
         self.temp = tempfile.TemporaryDirectory(prefix="qut_scan_tests_")
         self.addCleanup(self.temp.cleanup)
-        self.root = Path(self.temp.name)
+        # macOS exposes temp under /var -> /private/var. Use the physical
+        # fixture root: production intentionally rejects linked scan roots.
+        self.root = Path(self.temp.name).resolve()
         self.source = self.root / "study"
         self.source.mkdir()
         self.env = mock.patch.dict(os.environ)

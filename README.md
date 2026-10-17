@@ -250,6 +250,11 @@ Image analysis is optional and paid: install `anthropic` and explicitly choose
 Do not share keys. See [scanner reference](scripts/scan_school_README.md) for formats,
 legacy environment variables, dependency limits and subject filtering.
 
+The scanner refuses linked source/output roots and linked ancestors as a safety
+boundary. Choose the physical directory rather than a symlink/junction alias;
+for example, macOS `/var/...` temporary paths physically live under `/private/var/...`.
+Ordinary `~/QUT Study` paths do not require using a temporary directory.
+
 The scanner has its own path configuration; it does not read `~/.qut-toolkit.json`.
 Pass `--source` when the library uses a custom root, or set `QUT_STUDY_ROOT` for both.
 
