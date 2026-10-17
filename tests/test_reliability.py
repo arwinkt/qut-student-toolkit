@@ -45,7 +45,7 @@ class AtomicReliabilityTests(unittest.TestCase):
 
     def test_exhausted_save_keeps_disk_and_memory_checkpoint(self):
         with tempfile.TemporaryDirectory() as d:
-            store = Store(d)
+            store = Store(Path(d).resolve())
             store.save(complete=True)
             old = json.loads(json.dumps(store.manifest))
             disk = store.manifest_path.read_bytes()
@@ -58,7 +58,7 @@ class AtomicReliabilityTests(unittest.TestCase):
 
     def test_failed_put_does_not_publish_entry_or_partial_target(self):
         with tempfile.TemporaryDirectory() as d:
-            store = Store(d)
+            store = Store(Path(d).resolve())
             real_replace = os.replace
             def replace(src, dst):
                 if Path(dst).name == 'target': raise sharing_error()
@@ -173,7 +173,7 @@ class WriterLockTests(unittest.TestCase):
     def test_reparse_root_guard_without_symlink_privileges(self):
         from qut_toolkit.locking import writer_lock
         with tempfile.TemporaryDirectory() as d:
-            root = Path(d)/'linked'
+            root = Path(d).resolve()/'linked'
             with patch('qut_toolkit.locking._is_link', side_effect=lambda p: p == root):
                 with self.assertRaises(ValueError):
                     with writer_lock(root): pass
@@ -184,17 +184,17 @@ class WriterLockTests(unittest.TestCase):
         from qut_toolkit.locking import writer_lock, WriterLockError
         with tempfile.TemporaryDirectory() as d:
             with self.assertRaisesRegex(RuntimeError, 'synthetic'):
-                with writer_lock(d):
+                with writer_lock(Path(d).resolve()):
                     with self.assertRaises(WriterLockError):
-                        with writer_lock(d): pass
+                        with writer_lock(Path(d).resolve()): pass
                     raise RuntimeError('synthetic')
-            with writer_lock(d): pass
+            with writer_lock(Path(d).resolve()): pass
 
     def test_real_process_contention_and_death_release(self):
         from qut_toolkit.locking import writer_lock, WriterLockError
         code = "import sys;sys.path.insert(0,sys.argv[1]);from qut_toolkit.locking import writer_lock;\nwith writer_lock(sys.argv[2]):\n print('LOCKED',flush=True);sys.stdin.read()"
         with tempfile.TemporaryDirectory() as d:
-            child = subprocess.Popen([sys.executable, '-u', '-c', code, str(SCRIPTS), d], stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+            child = subprocess.Popen([sys.executable, '-u', '-c', code, str(SCRIPTS), str(Path(d).resolve())], stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
             try:
                 # communicate(timeout) bounds readiness and keeps the child alive via inherited input.
                 import threading
@@ -204,9 +204,9 @@ class WriterLockTests(unittest.TestCase):
                 self.assertFalse(reader.is_alive(), 'child lock acquisition timed out')
                 self.assertEqual(ready, ['LOCKED\n'])
                 with self.assertRaises(WriterLockError):
-                    with writer_lock(d): pass
+                    with writer_lock(Path(d).resolve()): pass
                 child.kill(); child.wait(timeout=10)
-                with writer_lock(d): pass
+                with writer_lock(Path(d).resolve()): pass
             finally:
                 if child.poll() is None: child.kill()
                 child.communicate(timeout=10)
@@ -214,7 +214,7 @@ class WriterLockTests(unittest.TestCase):
     def test_linked_root_and_linked_lock_rejected(self):
         from qut_toolkit.locking import writer_lock
         with tempfile.TemporaryDirectory() as d:
-            base = Path(d); real = base/'real'; real.mkdir()
+            base = Path(d).resolve(); real = base/'real'; real.mkdir()
             alias = base/'alias'
             try: alias.symlink_to(real, target_is_directory=True)
             except OSError: self.skipTest('symlink privilege unavailable')

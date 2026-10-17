@@ -26,6 +26,14 @@ class LocalOCRTests(unittest.TestCase):
         self.image = self.root / 'scan.png'
         Image.new('RGB', (120, 50), 'white').save(self.image)
 
+    def test_empty_office_without_images_stays_incomplete(self):
+        backend = types.SimpleNamespace(image_to_string=mock.Mock())
+        for native in ('', '[No extractable text — image-only document]'):
+            with mock.patch.dict(sys.modules, pytesseract=backend), mock.patch.object(ocr, '_images', return_value=(x for x in ())):
+                text = ocr.extract_local_ocr(self.root/'empty.docx', native_text=native)
+            self.assertIn(ocr.INCOMPLETE, text)
+        backend.image_to_string.assert_not_called()
+
     def test_backend_options_and_uncertainty(self):
         backend = types.SimpleNamespace(image_to_string=mock.Mock(return_value='Actual words'))
         with mock.patch.dict(sys.modules, pytesseract=backend):

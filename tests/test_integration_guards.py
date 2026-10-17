@@ -98,7 +98,7 @@ class IntegrationGuards(unittest.TestCase):
 
     def test_library_internal_link_is_rejected(self):
         with tempfile.TemporaryDirectory() as d:
-            s=Store(d)
+            s=Store(Path(d).resolve())
             with patch('qut_toolkit.storage.is_link', side_effect=lambda p:Path(p).name=='pages'):
                 with self.assertRaises(ValueError): s.put('page:1','pages/page-1.md','a')
 

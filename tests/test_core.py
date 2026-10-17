@@ -31,22 +31,22 @@ class CoreTests(unittest.TestCase):
             self.assertNotIn(result.split('.')[0].upper(), ['CON','NUL','AUX'])
     def test_content_hash_local_conflict(self):
         with tempfile.TemporaryDirectory() as d:
-            s = Store(d)
+            s = Store(Path(d).resolve())
             self.assertEqual(s.put('page:1', 'pages/1.md', b'one'), 'added')
             s.save()
-            s = Store(d)
+            s = Store(Path(d).resolve())
             self.assertEqual(s.put('page:1', 'pages/1.md', b'one'), 'unchanged')
             (Path(d)/'pages/1.md').write_bytes(b'edit')
             self.assertEqual(s.put('page:1', 'pages/1.md', b'two'), 'conflict')
             self.assertEqual((Path(d)/'pages/1.md').read_bytes(), b'edit')
             s.save()
-            s = Store(d)
+            s = Store(Path(d).resolve())
             s.put('page:1', 'pages/1.md', b'two')
             self.assertEqual(len(list((Path(d)/'conflicts').glob('*'))), 1)
             self.assertTrue(any(p.read_bytes() == b'one' for p in (Path(d)/'originals').rglob('*') if p.is_file()))
     def test_storage_traversal(self):
         with tempfile.TemporaryDirectory() as d:
-            with self.assertRaises(ValueError): Store(d).put('x', '../bad', b'x')
+            with self.assertRaises(ValueError): Store(Path(d).resolve()).put('x', '../bad', b'x')
     def test_client_pagination_and_late_error(self):
         seen=[]
         def transport(url, headers, timeout):

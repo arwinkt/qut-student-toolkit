@@ -154,7 +154,10 @@ def extract_local_ocr(path, native_text='', *, max_pages=20, max_pixels=8_000_00
                 else:
                     parts.append(text)
             if count == 0:
-                parts.append('[No embedded images to OCR]')
+                if not native_text.strip() or native_text.lstrip().startswith(('[No extractable','[ERROR')):
+                    parts.append(f'{INCOMPLETE} no embedded images and no usable native text]')
+                else:
+                    parts.append('[No embedded images to OCR]')
         finally:
             images.close()
     except Exception as exc:
