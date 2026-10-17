@@ -105,6 +105,14 @@ Publication covers toolkit code, documentation and synthetic tests only.
 - Do not run concurrent sync writers against one output folder.
 - Content-hashed originals, working copies, conflicts and optional notes mirrors
   consume extra disk space. Interrupted QA files were preserved, not deleted.
-- macOS execution has not been verified. Windows and Ubuntu, each with Python
-  3.11 and 3.12, passed the exact reviewed-head GitHub Actions matrix before
-  [PR #1](https://github.com/arwinkt/qut-student-toolkit/pull/1) was merged.
+- CI now includes Windows, macOS and Ubuntu, each on Python 3.11/3.12, with
+  documented browser/document dependencies and a real Chromium smoke via
+  `python scripts/platform_smoke.py`. It checks Unicode/spaced paths, atomic
+  writes, owned persistent profiles, synthetic cookie transport over loopback,
+  close/reopen persistence and cleanup. No real login/profile is used.
+- A passing macOS CI job establishes runner compatibility, not real QUT
+  sign-in/MFA acceptance on a physical Mac or every Intel/Apple Silicon release.
+  Real institutional browser acceptance remains Windows-only. Check exact-head
+  workflow results; configuring a matrix alone is not evidence it passed.
+- [PR #1](https://github.com/arwinkt/qut-student-toolkit/pull/1) originally passed
+  the Windows/Ubuntu matrix before merge; macOS coverage is a follow-up.
