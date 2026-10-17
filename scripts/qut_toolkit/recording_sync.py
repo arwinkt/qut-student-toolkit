@@ -9,8 +9,12 @@ from .echo import discover_recordings, capture_page, safe_canvas_url, AuthNeeded
 from .storage import Store, identifier, utc_now, is_link
 
 
-def course_sources(client,cid):
-    """Return unique durable Canvas launch pages and explicit discovery failures."""
+def course_sources(client,cid,browser_inventory=None):
+    """Return unique durable Canvas launch pages and explicit discovery failures.
+
+    Optional browser_inventory(str_course_id) seeds visible same-course page refs;
+    bind visible.browser_inventory to an authorized BrowserSession with partial.
+    """
     cid=identifier(cid)
     sources={}
     errors=[]
@@ -27,18 +31,38 @@ def course_sources(client,cid):
     refs={str(p['url']):p for p in pages if p.get('url')}
     try:
         modules=client.list(f'/api/v1/courses/{cid}/modules?per_page=100')
-        for module in modules:
-            mid=identifier(module['id'])
-            for item in client.list(f'/api/v1/courses/{cid}/modules/{mid}/items?per_page=100'):
-                if item.get('type')=='Page' and item.get('page_url'):
-                    refs.setdefault(item['page_url'],{'url':item['page_url'],'title':item.get('title')})
-                elif item.get('type') in ('ExternalTool','ExternalUrl'):
-                    source=item.get('html_url') or f'{client.base_url}/courses/{cid}/modules/items/{identifier(item["id"])}'
-                    evidence=str(item.get('external_url',''))+' '+str(item.get('title',''))
-                    if safe_canvas_url(source) and 'echo' in evidence.lower():
-                        sources[source]={'source_url':public_url(source),'title':item.get('title') or 'Recording','kinds':['echo360']}
     except CanvasError as exc:
         failed('modules',exc)
+        modules=[]
+    for module in modules:
+        mid=identifier(module['id'])
+        try:
+            items=client.list(f'/api/v1/courses/{cid}/modules/{mid}/items?per_page=100')
+        except CanvasError as exc:
+            failed('modules',exc)
+            errors[-1].update(module_id=mid,status=exc.status)
+            continue
+        for item in items:
+            if item.get('type')=='Page' and item.get('page_url'):
+                refs.setdefault(item['page_url'],{'url':item['page_url'],'title':item.get('title')})
+            elif item.get('type') in ('ExternalTool','ExternalUrl'):
+                source=item.get('html_url') or f'{client.base_url}/courses/{cid}/modules/items/{identifier(item["id"])}'
+                evidence=str(item.get('external_url',''))+' '+str(item.get('title',''))
+                if safe_canvas_url(source) and 'echo' in evidence.lower():
+                    sources[source]={'source_url':public_url(source),'title':item.get('title') or 'Recording','kinds':['echo360']}
+    if browser_inventory is not None:
+        from .visible import normalize_inventory
+        try:
+            visible=normalize_inventory(browser_inventory(cid),client.base_url,cid)
+            for resource in visible['resources']:
+                if resource['kind']=='page':
+                    refs.setdefault(resource['id'],{'url':resource['id'],'title':resource['title']})
+                elif resource['kind'] in ('external_tool','module_item') and 'echo' in resource['title'].lower():
+                    sources[resource['url']]={'source_url':resource['url'],'title':resource['title'],'kinds':['echo360']}
+            errors.append({'stage':'browser inventory','kind':'visible_only_coverage',
+                           'message':'Bounded/visible-only discovery; hidden and unlinked sources remain unknown'})
+        except Exception as exc:
+            failed('browser inventory',exc)
     for page in refs.values():
         slug=str(page.get('url') or '')
         if not slug:
@@ -52,6 +76,7 @@ def course_sources(client,cid):
                                  'kinds':sorted({x['kind'] for x in discovered})}
         except CanvasError as exc:
             failed('page',exc)
+            errors[-1].update(source_url=public_url(source),status=exc.status)
     # The Echo library is a course-navigation LTI tool, not necessarily a module page.
     try:
         tools=client.list(f'/api/v1/courses/{cid}/external_tools?include_parents=true&per_page=100')

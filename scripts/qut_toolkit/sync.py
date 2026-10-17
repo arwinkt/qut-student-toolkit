@@ -87,11 +87,14 @@ def _write_retry(operation):
             time.sleep(0.05*(2**attempt))
 
 
-def sync_course(client, cid, config):
+def sync_course(client, cid, config, browser_inventory=None):
     """Sync one numeric course ID and return an honest, JSON-serializable report.
 
     Optional forbidden file listings do not fail referenced-file downloads, but do
     make course coverage incomplete. Complete snapshots survive any partial run.
+    browser_inventory is opt-in: callable(str_course_id) -> visible inventory dict.
+    Bind visible.browser_inventory to an authorized BrowserSession with partial.
+    Visible file links diagnose discovery only; forbidden metadata is not bypassed.
     """
     cid=identifier(cid)
     base=client.base_url.rstrip('/')
@@ -186,6 +189,50 @@ def sync_course(client, cid, config):
                 target=item.get('external_url') or item.get('url')
                 if target:
                     inspect_html('<a href="'+str(target).replace('"','&quot;')+'">External resource</a>',source)
+    visible_inventory=None
+    if browser_inventory is not None:
+        from .visible import normalize_inventory
+        try:
+            visible_inventory=normalize_inventory(browser_inventory(cid),base,cid)
+        except Exception as exc:
+            error('browser inventory',exc)
+            visible_inventory=normalize_inventory({'course_id':cid,'bounded':True},base,cid)
+        # DOM traversal cannot establish absence of hidden or unlinked resources.
+        errors.append({'section':'browser inventory','kind':'visible_only_coverage',
+                       'message':'Visible-only discovery cannot establish hidden or unlinked course coverage.'})
+        known_modules={identifier(m['id']):m for m in modules}
+        for module in visible_inventory['modules']:
+            mid=module['id']
+            if mid not in known_modules:
+                known_modules[mid]={'id':mid,'name':module['title']}
+                modules.append(known_modules[mid])
+                module_items[mid]=[]
+        for resource in visible_inventory['resources']:
+            kind,rid=resource['kind'],resource['id']
+            item={'title':resource['title'],'html_url':resource['url']}
+            if kind=='page':
+                page_specs.setdefault(rid,{'url':rid,'title':resource['title']})
+                item.update(type='Page',page_url=rid)
+            elif kind=='file':
+                file_ids.add(rid)
+                item.update(type='File',content_id=rid)
+            elif kind=='assignment':
+                assignment_specs.setdefault(rid,None)
+                item.update(type='Assignment',content_id=rid)
+            else:
+                item.update(type='ExternalUrl')
+                if 'echo' in resource['title'].lower():
+                    recording_map[resource['url']]={'kind':'echo360','title':resource['title'],'source_url':resource['url']}
+            for mid in resource['module_ids']:
+                if mid not in known_modules:
+                    known_modules[mid]={'id':mid,'name':'Module '+mid}
+                    modules.append(known_modules[mid]);module_items[mid]=[]
+                existing=module_items[mid]
+                if not any(i.get('html_url')==item['html_url'] or
+                           (i.get('type')==item['type'] and
+                            (kind=='page' and i.get('page_url')==rid or kind in ('file','assignment') and str(i.get('content_id'))==rid))
+                           for i in existing):
+                    existing.append(item.copy())
     page_paths={}
     seen_pages=set()
     def export_pages():
@@ -293,6 +340,17 @@ def sync_course(client, cid, config):
         if any(r.get('source_url') in module_sources for r in records) and (store.root/'lectures/INDEX.md').exists():
             lines += ['',link('Lecture transcripts','../../lectures/INDEX.md')]
         put('module:'+mid,f'modules/module-{mid}/INDEX.md','\n'.join(lines)+'\n')
+    if visible_inventory is not None:
+        from .visible import reconciliation, reconciliation_markdown
+        known_page_paths=store.manifest.setdefault('visible_page_paths',{})
+        known_page_paths.update(page_paths)
+        saved_paths={e['path'] for e in store.manifest['entries'].values() if store.path(e['path']).is_file()}
+        reconciled=reconciliation(visible_inventory,store.manifest['entries'],known_page_paths,errors,saved_paths=saved_paths)
+        put('visible-reconciliation','visible-reconciliation.json',json.dumps(reconciled,indent=2,ensure_ascii=False)+'\n')
+        put('visible-reconciliation-markdown','visible-reconciliation.md',reconciliation_markdown(reconciled))
+        result['browser_inventory']={'complete':False,'bounded':visible_inventory['bounded'],
+                                     'observed_resources':len(visible_inventory['resources']),
+                                     'reconciliation':'visible-reconciliation.json'}
     current=assessment_snapshot(assignments,base,cid,config.timezone)
     previous=store.manifest.get('assessment_snapshot',{})
     complete=not errors
@@ -334,6 +392,8 @@ def sync_course(client, cid, config):
     lines += ['','## Recording sources','']+['- '+link(r.get('title','Recording'),r['source_url']) for r in records if r.get('source_url')]
     lines += ['','## External references','']+['- '+link(url,url) for url in sorted(external_links)]
     if warnings: lines += ['','## Limitations','']+['- '+md_text(w) for w in warnings]
+    if visible_inventory is not None:
+        lines += ['',link('Browser-visible reconciliation','visible-reconciliation.md')]
     put('index','INDEX.md','\n'.join(lines)+'\n')
     if config.notes_root:
         notes_base=Path(config.notes_root).expanduser().resolve()

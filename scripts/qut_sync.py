@@ -4,6 +4,9 @@ import argparse
 import json
 from pathlib import Path
 import sys
+from contextlib import ExitStack
+from functools import partial
+from qut_toolkit.locking import writer_lock, WriterLockError
 
 from qut_toolkit.client import CanvasClient, CanvasError
 from qut_toolkit.config import DEFAULT_CONFIG, load_config
@@ -21,6 +24,7 @@ def _options(parser, sub=False):
     parser.add_argument('--timezone',default=default,help='Findings timezone, e.g. Australia/Brisbane or UTC')
     parser.add_argument('--cdp-url',default=default,help='Optional loopback browser CDP endpoint')
     parser.add_argument('--include-media',action='store_true',default=default,help='Opt into downloading audio/video resources (potentially very large)')
+    parser.add_argument('--browser-inventory',action='store_true',default=default,help='Opt in to read-only discovery of browser-visible course links')
     parser.add_argument('--max-file-bytes',type=int,default=default,help='Maximum advertised resource size; default 100 MiB')
 
 
@@ -82,7 +86,11 @@ def main(argv=None):
             return 1
     client=None
     results=[]
+    locks=ExitStack()
     try:
+        if args.command=='sync':
+            locks.enter_context(writer_lock(config.root))
+            if config.notes_root: locks.enter_context(writer_lock(config.notes_root/'qut-toolkit'))
         if args.cdp_url:
             factory=getattr(CanvasClient,'from_cdp',None)
             if factory is None: raise CanvasError('unsupported','Browser transport unavailable')
@@ -95,13 +103,26 @@ def main(argv=None):
         ids=list(dict.fromkeys(args.course_ids))
         if args.all:
             ids=list(dict.fromkeys(identifier(c['id']) for c in client.list('/api/v1/courses?enrollment_state=active&per_page=100')))
+        inventory=None
+        if args.browser_inventory:
+            from qut_toolkit.browser import BrowserSession
+            from qut_toolkit.visible import browser_inventory
+            session=getattr(client,'browser_session',None)
+            if session is None:
+                session=locks.enter_context(BrowserSession(base_url=config.base_url,timeout=config.timeout))
+            inventory=partial(browser_inventory,session)
         for cid in ids:
-            try: results.append(sync_course(client,cid,config))
+            try:
+                if inventory is None: results.append(sync_course(client,cid,config))
+                else: results.append(sync_course(client,cid,config,browser_inventory=inventory))
             except (CanvasError,OSError,ValueError,KeyError):
                 results.append({'course_id':cid,'title':'Course '+cid,'complete':False,'counts':{},'errors':[{'kind':'sync','message':'Course sync failed; check authentication, access and output permissions.'}]})
         report=write_latest(config.root,results)
         print(json.dumps(report,indent=2,ensure_ascii=False))
         return 0 if report['complete'] else 1
+    except WriterLockError:
+        print('Output library is busy: another sync is running. No checkpoints were changed.',file=sys.stderr)
+        return 1
     except (CanvasError,OSError,ValueError,KeyError) as exc:
         # No provider exception strings: they can contain credentials/signed links.
         error={'kind':getattr(exc,'kind','sync'),'message':'Cannot complete Canvas operation; check authentication, access, transport and output permissions.'}
@@ -111,9 +132,12 @@ def main(argv=None):
         print(error['kind']+': '+error['message'],file=sys.stderr)
         return 1
     finally:
-        if client is not None:
-            close=getattr(client,'close',None)
-            if close: close()
+        try:
+            if client is not None:
+                close=getattr(client,'close',None)
+                if close: close()
+        finally:
+            locks.close()
 
 
 if __name__=='__main__':

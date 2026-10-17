@@ -5,6 +5,9 @@ import json
 from pathlib import Path
 import re
 import sys
+from contextlib import ExitStack
+from functools import partial
+from qut_toolkit.locking import writer_lock, WriterLockError
 from qut_toolkit.browser import BrowserSession
 from qut_toolkit.client import CanvasClient, CanvasError
 from qut_toolkit.config import load_config
@@ -22,6 +25,7 @@ def main(argv=None):
     parser.add_argument('--config',help='Non-secret toolkit JSON config')
     parser.add_argument('--cdp-url',help='Attach to an existing browser through loopback CDP')
     parser.add_argument('--profile',help='Saved Playwright login profile; default from canvas_auth.py')
+    parser.add_argument('--browser-inventory',action='store_true',help='Include bounded read-only browser-visible discovery')
     parser.add_argument('--discover-only',action='store_true',help='List recording sources without opening players')
     parser.add_argument('--limit',type=int,help='Bound number of source pages per unit; report remains bounded')
     parser.add_argument('--lesson-limit',type=int,help='Bound library lessons per source; report remaining coverage')
@@ -33,8 +37,10 @@ def main(argv=None):
         parser.error('--wait-seconds must be between 1 and 60')
     if args.page_url and not safe_canvas_url(args.page_url):
         parser.error('--page-url must be a durable QUT Canvas course source')
+    locks=ExitStack()
     try:
         config=load_config(args.config,root=args.root)
+        locks.enter_context(writer_lock(config.root))
         course_ids=[identifier(x) for x in args.course_id or []]
         if args.page_url:
             course_ids=[re.search(r'/courses/(\d+)/',args.page_url).group(1)]
@@ -47,7 +53,11 @@ def main(argv=None):
                 if args.page_url:
                     sources=[{'source_url':args.page_url,'title':None}];errors=[]
                 else:
-                    sources,errors=course_sources(client,cid)
+                    if args.browser_inventory:
+                        from qut_toolkit.visible import browser_inventory
+                        sources,errors=course_sources(client,cid,browser_inventory=partial(browser_inventory,session))
+                    else:
+                        sources,errors=course_sources(client,cid)
                 if args.discover_only:
                     summaries.append({'course_id':cid,'sources':sources,'discovery_errors':errors,'extraction':'not_requested'})
                     continue
@@ -72,9 +82,14 @@ def main(argv=None):
                 summaries.append(summary)
         print(json.dumps({'courses':summaries},ensure_ascii=False,indent=2))
         return 0 if summaries and all((not s.get('discovery_errors')) if args.discover_only else s.get('complete',False) for s in summaries) else 2
+    except WriterLockError:
+        print('Output library is busy: another sync is running. No checkpoints were changed.',file=sys.stderr)
+        return 2
     except (CanvasError,ValueError,OSError) as exc:
         print(json.dumps({'error':getattr(exc,'kind','configuration'),'message':str(exc)},ensure_ascii=False),file=sys.stderr)
         return 2
+    finally:
+        locks.close()
 
 
 if __name__=='__main__':

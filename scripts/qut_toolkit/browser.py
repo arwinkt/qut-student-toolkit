@@ -57,7 +57,8 @@ class BrowserSession:
                     return b'',response_headers
                 if not r.ok:
                     kind='auth' if status==401 else 'access' if status==403 else 'http'
-                    raise CanvasError(kind,'Browser request rejected',status)
+                    raise CanvasError(kind,'Browser request rejected',status,
+                                  r.headers.get('retry-after'))
                 return r.body(),response_headers
             finally:
                 r.dispose()
